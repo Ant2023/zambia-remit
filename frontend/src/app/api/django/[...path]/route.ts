@@ -2,10 +2,10 @@ function getDjangoApiBaseUrl() {
   const apiBaseUrl = process.env.DJANGO_API_BASE_URL;
 
   if (!apiBaseUrl && process.env.NODE_ENV === "production") {
-    throw new Error("DJANGO_API_BASE_URL must be set in production.");
+    return null;
   }
 
-  return apiBaseUrl ?? "http://127.0.0.1:8000/api/v1";
+  return (apiBaseUrl ?? "http://127.0.0.1:8000/api/v1").replace(/\/$/, "");
 }
 
 type RouteContext = {
@@ -16,7 +16,18 @@ async function proxyToDjango(request: Request, context: RouteContext) {
   const params = await context.params;
   const path = params.path.join("/");
   const url = new URL(request.url);
-  const targetUrl = `${getDjangoApiBaseUrl()}/${path}/${url.search}`;
+  const apiBaseUrl = getDjangoApiBaseUrl();
+
+  if (!apiBaseUrl) {
+    return Response.json(
+      {
+        detail: "Frontend API configuration is missing. Set DJANGO_API_BASE_URL.",
+      },
+      { status: 500 },
+    );
+  }
+
+  const targetUrl = `${apiBaseUrl}/${path}/${url.search}`;
 
   const headers = new Headers();
   const contentType = request.headers.get("content-type");
@@ -31,12 +42,23 @@ async function proxyToDjango(request: Request, context: RouteContext) {
   }
 
   const hasBody = !["GET", "HEAD"].includes(request.method);
-  const response = await fetch(targetUrl, {
-    method: request.method,
-    headers,
-    body: hasBody ? await request.text() : undefined,
-    cache: "no-store",
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(targetUrl, {
+      method: request.method,
+      headers,
+      body: hasBody ? await request.text() : undefined,
+      cache: "no-store",
+    });
+  } catch {
+    return Response.json(
+      {
+        detail: "Could not reach the backend API. Please try again.",
+      },
+      { status: 502 },
+    );
+  }
 
   const responseBody = await response.text();
   const responseHeaders = new Headers();
@@ -44,6 +66,11 @@ async function proxyToDjango(request: Request, context: RouteContext) {
 
   if (responseType) {
     responseHeaders.set("content-type", responseType);
+  }
+
+  const wwwAuthenticate = response.headers.get("www-authenticate");
+  if (wwwAuthenticate) {
+    responseHeaders.set("www-authenticate", wwwAuthenticate);
   }
 
   return new Response(responseBody, {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FlowSummary } from "@/components/FlowSummary";
 import { MarketSelector } from "@/components/MarketSelector";
 import { RecipientForm } from "@/components/RecipientForm";
@@ -22,6 +23,7 @@ import {
 import { clearAuthSession, getStoredAuthSession } from "@/lib/auth";
 
 export default function Home() {
+  const router = useRouter();
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [senderCountries, setSenderCountries] = useState<Country[]>([]);
   const [destinationCountries, setDestinationCountries] = useState<Country[]>([]);
@@ -154,6 +156,10 @@ export default function Home() {
     setAuthSession(null);
     setRecipient(undefined);
     setQuote(undefined);
+    setReasonForSending("");
+    setProviderName("");
+    setSendAmount("");
+    router.push("/login");
   }
 
   function handleSendAmountChange(value: string) {

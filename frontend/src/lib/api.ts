@@ -189,7 +189,7 @@ export type MockFundingPayload = {
   note?: string;
 };
 
-class ApiError extends Error {
+export class ApiError extends Error {
   status: number;
   details: unknown;
 
@@ -223,9 +223,11 @@ async function apiFetch<T>(
   });
 
   const contentType = response.headers.get("content-type") ?? "";
-  const data = contentType.includes("application/json")
-    ? await response.json()
-    : await response.text();
+  const responseText = await response.text();
+  const data =
+    responseText && contentType.includes("application/json")
+      ? JSON.parse(responseText)
+      : responseText;
 
   if (!response.ok) {
     throw new ApiError("API request failed", response.status, data);
@@ -354,9 +356,7 @@ export function markTransferFunded(
 
 export function formatApiError(error: unknown) {
   if (error instanceof ApiError) {
-    return typeof error.details === "string"
-      ? error.details
-      : JSON.stringify(error.details, null, 2);
+    return formatErrorDetails(error.details);
   }
 
   if (error instanceof Error) {
@@ -364,4 +364,39 @@ export function formatApiError(error: unknown) {
   }
 
   return "Something went wrong.";
+}
+
+function formatErrorDetails(details: unknown): string {
+  if (!details) {
+    return "Something went wrong. Please try again.";
+  }
+
+  if (typeof details === "string") {
+    return details || "Something went wrong. Please try again.";
+  }
+
+  if (Array.isArray(details)) {
+    return details.map(formatErrorDetails).join(" ");
+  }
+
+  if (typeof details === "object") {
+    const record = details as Record<string, unknown>;
+
+    if (typeof record.detail === "string") {
+      return record.detail;
+    }
+
+    return Object.entries(record)
+      .map(([field, value]) => {
+        const label =
+          field === "non_field_errors"
+            ? ""
+            : `${field.replaceAll("_", " ")}: `;
+        return `${label}${formatErrorDetails(value)}`.trim();
+      })
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  return "Something went wrong. Please try again.";
 }

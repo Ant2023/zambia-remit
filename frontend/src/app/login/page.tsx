@@ -2,9 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
-import { formatApiError, loginCustomer, registerCustomer } from "@/lib/api";
-import { saveAuthSession } from "@/lib/auth";
+import { FormEvent, useEffect, useState } from "react";
+import {
+  formatApiError,
+  getCurrentUser,
+  loginCustomer,
+  registerCustomer,
+} from "@/lib/api";
+import { clearAuthSession, isValidAuthSession, saveAuthSession } from "@/lib/auth";
 
 type AuthMode = "login" | "register";
 
@@ -13,6 +18,10 @@ export default function LoginPage() {
   const [mode, setMode] = useState<AuthMode>("login");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    clearAuthSession();
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -35,7 +44,12 @@ export default function LoginPage() {
               last_name: String(form.get("last_name") ?? ""),
             });
 
-      saveAuthSession(session);
+      if (!isValidAuthSession(session)) {
+        throw new Error("Login succeeded, but the session response was invalid.");
+      }
+
+      const user = await getCurrentUser(session.token);
+      saveAuthSession({ token: session.token, user });
       router.push("/");
     } catch (apiError) {
       setError(formatApiError(apiError));
