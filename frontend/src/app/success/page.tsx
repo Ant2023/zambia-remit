@@ -81,7 +81,7 @@ export default function SuccessPage() {
           </p>
         )}
 
-        <Link href="/">
+        <Link href="/send?new=1">
           <button type="button">Start another transfer</button>
         </Link>
 

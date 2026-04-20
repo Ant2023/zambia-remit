@@ -16,10 +16,17 @@ type AuthMode = "login" | "register";
 export default function LoginPage() {
   const router = useRouter();
   const [mode, setMode] = useState<AuthMode>("login");
+  const [nextPath, setNextPath] = useState("/");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const next = params.get("next");
+    if (next?.startsWith("/") && !next.startsWith("//")) {
+      setNextPath(next);
+    }
+
     clearAuthSession();
   }, []);
 
@@ -40,8 +47,6 @@ export default function LoginPage() {
               email,
               password,
               password_confirm: String(form.get("password_confirm") ?? ""),
-              first_name: String(form.get("first_name") ?? ""),
-              last_name: String(form.get("last_name") ?? ""),
             });
 
       if (!isValidAuthSession(session)) {
@@ -50,7 +55,7 @@ export default function LoginPage() {
 
       const user = await getCurrentUser(session.token);
       saveAuthSession({ token: session.token, user });
-      router.push("/");
+      router.push(nextPath);
     } catch (apiError) {
       setError(formatApiError(apiError));
     } finally {
@@ -65,8 +70,9 @@ export default function LoginPage() {
           <p className="kicker">Customer access</p>
           <h1>{mode === "login" ? "Log in" : "Create account"}</h1>
           <p className="lede">
-            Use a customer account to send money, fund transactions, and track
-            transfer status.
+            {mode === "login"
+              ? "Use a customer account to send money, fund transactions, and track transfer status."
+              : "Create your account with email and password, then continue to the send-money flow."}
           </p>
         </div>
 
@@ -88,19 +94,6 @@ export default function LoginPage() {
         </div>
 
         <form className="stack" onSubmit={handleSubmit}>
-          {mode === "register" ? (
-            <div className="form-grid">
-              <label>
-                First name
-                <input name="first_name" required />
-              </label>
-              <label>
-                Last name
-                <input name="last_name" required />
-              </label>
-            </div>
-          ) : null}
-
           <label>
             Email
             <input name="email" type="email" autoComplete="email" required />

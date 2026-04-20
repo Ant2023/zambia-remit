@@ -91,7 +91,7 @@ export default function HistoryPage() {
             <p className="lede">
               Review submitted transfers and their current processing status.
             </p>
-            <Link className="text-link" href="/">
+            <Link className="text-link" href="/send?new=1">
               Start a new transfer
             </Link>
           </div>

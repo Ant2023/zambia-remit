@@ -1,6 +1,8 @@
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework import serializers
 
+from apps.countries.models import Country
+from apps.countries.serializers import CountrySerializer
 from .models import SenderProfile
 
 
@@ -79,13 +81,40 @@ class CustomerLoginSerializer(serializers.Serializer):
 
 
 class SenderProfileSerializer(serializers.ModelSerializer):
+    email = serializers.EmailField(source="user.email", read_only=True)
+    first_name = serializers.CharField(
+        source="user.first_name",
+        max_length=150,
+        required=True,
+        allow_blank=False,
+    )
+    last_name = serializers.CharField(
+        source="user.last_name",
+        max_length=150,
+        required=True,
+        allow_blank=False,
+    )
+    phone_number = serializers.CharField(required=True, allow_blank=False)
+    country = CountrySerializer(read_only=True)
+    country_id = serializers.PrimaryKeyRelatedField(
+        source="country",
+        queryset=Country.objects.filter(is_sender_enabled=True),
+        write_only=True,
+        required=True,
+    )
+    is_complete = serializers.SerializerMethodField()
+
     class Meta:
         model = SenderProfile
         fields = (
             "id",
             "user",
+            "email",
+            "first_name",
+            "last_name",
             "phone_number",
             "country",
+            "country_id",
             "date_of_birth",
             "address_line_1",
             "address_line_2",
@@ -93,7 +122,36 @@ class SenderProfileSerializer(serializers.ModelSerializer):
             "region",
             "postal_code",
             "kyc_status",
+            "is_complete",
             "created_at",
             "updated_at",
         )
-        read_only_fields = ("id", "user", "kyc_status", "created_at", "updated_at")
+        read_only_fields = (
+            "id",
+            "user",
+            "email",
+            "country",
+            "kyc_status",
+            "is_complete",
+            "created_at",
+            "updated_at",
+        )
+
+    def get_is_complete(self, obj):
+        return bool(
+            obj.user.first_name
+            and obj.user.last_name
+            and obj.phone_number
+            and obj.country_id
+        )
+
+    def update(self, instance, validated_data):
+        user_data = validated_data.pop("user", {})
+
+        for field, value in user_data.items():
+            setattr(instance.user, field, value)
+
+        if user_data:
+            instance.user.save(update_fields=list(user_data.keys()))
+
+        return super().update(instance, validated_data)

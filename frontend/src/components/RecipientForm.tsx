@@ -25,7 +25,7 @@ type RecipientFormProps = {
     payoutMethod: PayoutMethod,
     reasonForSending: string,
     providerName: string,
-  ) => void;
+  ) => void | Promise<void>;
 };
 
 export function RecipientForm({
@@ -86,7 +86,7 @@ export function RecipientForm({
 
     try {
       const recipient = await createRecipient(payload, authToken);
-      onCreated(recipient, payoutMethod, reasonForSending, providerName);
+      await onCreated(recipient, payoutMethod, reasonForSending, providerName);
     } catch (apiError) {
       setError(formatApiError(apiError));
     } finally {
@@ -201,7 +201,7 @@ export function RecipientForm({
         {error ? <pre className="error small">{error}</pre> : null}
 
         <button type="submit" disabled={loading || !destinationCountry || !authToken}>
-          {loading ? "Checking details..." : "Continue"}
+          {loading ? "Preparing review..." : "Continue to review"}
         </button>
       </form>
     </section>

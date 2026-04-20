@@ -20,8 +20,8 @@ export type CustomerRegistrationPayload = {
   email: string;
   password: string;
   password_confirm: string;
-  first_name: string;
-  last_name: string;
+  first_name?: string;
+  last_name?: string;
 };
 
 export type Currency = {
@@ -39,6 +39,33 @@ export type Country = {
   currency: Currency;
   is_sender_enabled: boolean;
   is_destination_enabled: boolean;
+};
+
+export type SenderProfile = {
+  id: string;
+  user: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  phone_number: string;
+  country: Country | null;
+  date_of_birth: string | null;
+  address_line_1: string;
+  address_line_2: string;
+  city: string;
+  region: string;
+  postal_code: string;
+  kyc_status: string;
+  is_complete: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SenderProfilePayload = {
+  first_name: string;
+  last_name: string;
+  phone_number: string;
+  country_id: string;
 };
 
 export type Corridor = {
@@ -262,6 +289,21 @@ export function logoutCustomer(token: string) {
 
 export function getCurrentUser(token: string) {
   return apiFetch<User>("/accounts/me", {}, token);
+}
+
+export function getSenderProfile(token: string) {
+  return apiFetch<SenderProfile>("/accounts/profile", {}, token);
+}
+
+export function updateSenderProfile(payload: SenderProfilePayload, token: string) {
+  return apiFetch<SenderProfile>(
+    "/accounts/profile",
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
 }
 
 export function getSenderCountries() {
