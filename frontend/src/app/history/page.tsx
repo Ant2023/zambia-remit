@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { AppNavbar } from "@/components/AppNavbar";
 import type { AuthSession, Transfer } from "@/lib/api";
 import { formatApiError, getTransfers } from "@/lib/api";
 import { getStoredAuthSession } from "@/lib/auth";
@@ -82,7 +83,9 @@ export default function HistoryPage() {
   }
 
   return (
-    <main className="page">
+    <>
+      <AppNavbar />
+      <main className="page">
       <div className="shell stack">
         <header className="topbar">
           <div>
@@ -151,6 +154,7 @@ export default function HistoryPage() {
           ) : null}
         </section>
       </div>
-    </main>
+      </main>
+    </>
   );
 }

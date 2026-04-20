@@ -6,6 +6,8 @@ const FLOW_SESSION_KEYS = [
   "createdRecipient",
   "createdQuote",
   "sendAmount",
+  "sourceCountryId",
+  "destinationCountryId",
   "payoutMethod",
   "reasonForSending",
   "providerName",
@@ -49,7 +51,11 @@ export function clearTransferDraft() {
   FLOW_SESSION_KEYS.forEach((key) => window.sessionStorage.removeItem(key));
 }
 
-export function clearAuthSession() {
+export function clearCustomerSessionOnly() {
   window.sessionStorage.removeItem(AUTH_SESSION_KEY);
+}
+
+export function clearAuthSession() {
+  clearCustomerSessionOnly();
   clearTransferDraft();
 }

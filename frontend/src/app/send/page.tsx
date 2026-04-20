@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { AppNavbar } from "@/components/AppNavbar";
 import { FlowSummary } from "@/components/FlowSummary";
 import { MarketSelector } from "@/components/MarketSelector";
 import { RecipientForm } from "@/components/RecipientForm";
@@ -18,10 +18,8 @@ import {
   getDestinationCountries,
   getRateEstimate,
   getSenderCountries,
-  logoutCustomer,
 } from "@/lib/api";
 import {
-  clearAuthSession,
   clearTransferDraft,
   getStoredAuthSession,
 } from "@/lib/auth";
@@ -49,7 +47,13 @@ export default function SendPage() {
   const [flowKey, setFlowKey] = useState(0);
 
   useEffect(() => {
-    setAuthSession(getStoredAuthSession());
+    const session = getStoredAuthSession();
+    setAuthSession(session);
+
+    if (!session) {
+      router.replace("/start");
+      return;
+    }
 
     const params = new URLSearchParams(window.location.search);
     if (params.get("new") === "1") {
@@ -62,6 +66,9 @@ export default function SendPage() {
     const savedRecipient = window.sessionStorage.getItem("createdRecipient");
     const savedQuote = window.sessionStorage.getItem("createdQuote");
     const savedSendAmount = window.sessionStorage.getItem("sendAmount") ?? "";
+    const savedSourceCountryId = window.sessionStorage.getItem("sourceCountryId");
+    const savedDestinationCountryId =
+      window.sessionStorage.getItem("destinationCountryId");
     const savedPayoutMethod = window.sessionStorage.getItem("payoutMethod");
     const savedReason = window.sessionStorage.getItem("reasonForSending") ?? "";
     const savedProvider = window.sessionStorage.getItem("providerName") ?? "";
@@ -79,6 +86,8 @@ export default function SendPage() {
     }
 
     setSendAmount(savedSendAmount);
+    setSourceCountryId(savedSourceCountryId ?? "");
+    setDestinationCountryId(savedDestinationCountryId ?? "");
     setReasonForSending(savedReason);
     setProviderName(savedProvider);
   }, []);
@@ -97,12 +106,22 @@ export default function SendPage() {
         setSenderCountries(senders);
         setDestinationCountries(destinations);
 
-        if (senders[0]) {
-          setSourceCountryId(senders[0].id);
+        const savedSourceCountryId = window.sessionStorage.getItem("sourceCountryId");
+        const savedDestinationCountryId =
+          window.sessionStorage.getItem("destinationCountryId");
+        const defaultSource =
+          senders.find((country) => country.id === savedSourceCountryId) ??
+          senders[0];
+        const defaultDestination =
+          destinations.find((country) => country.id === savedDestinationCountryId) ??
+          destinations[0];
+
+        if (defaultSource) {
+          setSourceCountryId(defaultSource.id);
         }
 
-        if (destinations[0]) {
-          setDestinationCountryId(destinations[0].id);
+        if (defaultDestination) {
+          setDestinationCountryId(defaultDestination.id);
         }
       } catch (apiError) {
         setError(formatApiError(apiError));
@@ -169,25 +188,6 @@ export default function SendPage() {
     window.sessionStorage.removeItem("createdQuote");
   }
 
-  async function handleLogout() {
-    if (authSession?.token) {
-      try {
-        await logoutCustomer(authSession.token);
-      } catch {
-        // The local session should still be cleared if the token is already invalid.
-      }
-    }
-
-    clearAuthSession();
-    setAuthSession(null);
-    setRecipient(undefined);
-    setQuote(undefined);
-    setReasonForSending("");
-    setProviderName("");
-    setSendAmount("");
-    router.push("/login");
-  }
-
   function handleSendAmountChange(value: string) {
     setSendAmount(value);
     window.sessionStorage.setItem("sendAmount", value);
@@ -246,48 +246,7 @@ export default function SendPage() {
 
   return (
     <div className="premium-home">
-      <header className="premium-nav">
-        <div className="premium-nav-inner">
-          <Link className="premium-brand" href="/">
-            <span className="brand-mark">FX</span>
-            <span>
-              <span className="brand-name">Zambia Remit</span>
-              <span className="brand-subtitle">Cross-border money transfers</span>
-            </span>
-          </Link>
-
-          <nav className="premium-links" aria-label="Primary navigation">
-            <Link href="/">Home</Link>
-            <Link href="/history">History</Link>
-            <a href="#transfer-form">Transfer</a>
-            <a href="#transfer-summary">Summary</a>
-          </nav>
-
-          <div className="premium-actions">
-            {authSession ? (
-              <>
-                <span className="signed-in-label">{authSession.user.email}</span>
-                <button
-                  type="button"
-                  className="nav-button ghost"
-                  onClick={handleLogout}
-                >
-                  Log out
-                </button>
-              </>
-            ) : (
-              <>
-                <Link className="nav-button ghost" href="/login?next=/send">
-                  Log in
-                </Link>
-                <Link className="nav-button solid" href="/login?next=/send">
-                  Get started
-                </Link>
-              </>
-            )}
-          </div>
-        </div>
-      </header>
+      <AppNavbar />
 
       <main className="premium-send-main">
         <section className="send-intro">
@@ -332,10 +291,12 @@ export default function SendPage() {
                 destinationCurrencyCode={rateEstimate?.destination_currency.code}
                 onSourceCountryChange={(value) => {
                   setSourceCountryId(value);
+                  window.sessionStorage.setItem("sourceCountryId", value);
                   clearTransactionDetails();
                 }}
                 onDestinationCountryChange={(value) => {
                   setDestinationCountryId(value);
+                  window.sessionStorage.setItem("destinationCountryId", value);
                   setRecipient(undefined);
                   setReasonForSending("");
                   setProviderName("");

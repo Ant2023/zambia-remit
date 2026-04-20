@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
+import { AppNavbar } from "@/components/AppNavbar";
 import type {
   AuthSession,
   Country,
@@ -228,7 +229,9 @@ export default function FundingPage() {
   const canConfirmFunding = Boolean(transfer && senderProfile?.is_complete);
 
   return (
-    <main className="page">
+    <>
+      <AppNavbar />
+      <main className="page">
       <div className="shell stack">
         <header className="topbar">
           <div>
@@ -470,6 +473,7 @@ export default function FundingPage() {
           </div>
         </div>
       </div>
-    </main>
+      </main>
+    </>
   );
 }

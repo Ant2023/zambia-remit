@@ -3,19 +3,85 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { AuthSession } from "@/lib/api";
-import { logoutCustomer } from "@/lib/api";
+import {
+  type AuthSession,
+  type Country,
+  type RateEstimate,
+  formatApiError,
+  getDestinationCountries,
+  getRateEstimate,
+  getSenderCountries,
+  logoutCustomer,
+} from "@/lib/api";
 import { clearAuthSession, getStoredAuthSession } from "@/lib/auth";
 
 export default function Home() {
   const router = useRouter();
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [previewAmount, setPreviewAmount] = useState("100");
+  const [senderCountries, setSenderCountries] = useState<Country[]>([]);
+  const [destinationCountries, setDestinationCountries] = useState<Country[]>([]);
+  const [sourceCountryId, setSourceCountryId] = useState("");
+  const [destinationCountryId, setDestinationCountryId] = useState("");
+  const [rateEstimate, setRateEstimate] = useState<RateEstimate>();
+  const [rateMessage, setRateMessage] = useState("");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     setAuthSession(getStoredAuthSession());
   }, []);
+
+  useEffect(() => {
+    async function loadPreviewCountries() {
+      try {
+        const [senders, destinations] = await Promise.all([
+          getSenderCountries(),
+          getDestinationCountries(),
+        ]);
+
+        const defaultSource =
+          senders.find((country) => country.currency.code === "USD") ?? senders[0];
+        const defaultDestination =
+          destinations.find((country) => country.currency.code === "ZMW") ??
+          destinations[0];
+
+        setSenderCountries(senders);
+        setDestinationCountries(destinations);
+        setSourceCountryId(defaultSource?.id ?? "");
+        setDestinationCountryId(defaultDestination?.id ?? "");
+      } catch (error) {
+        setRateMessage(formatApiError(error));
+      }
+    }
+
+    loadPreviewCountries();
+  }, []);
+
+  useEffect(() => {
+    async function loadPreviewRate() {
+      if (!sourceCountryId || !destinationCountryId) {
+        return;
+      }
+
+      setRateMessage("");
+
+      try {
+        const amount = Number(previewAmount);
+        const estimate = await getRateEstimate({
+          source_country_id: sourceCountryId,
+          destination_country_id: destinationCountryId,
+          send_amount: amount > 0 ? previewAmount : undefined,
+          payout_method: "mobile_money",
+        });
+        setRateEstimate(estimate);
+      } catch (error) {
+        setRateEstimate(undefined);
+        setRateMessage(formatApiError(error));
+      }
+    }
+
+    loadPreviewRate();
+  }, [destinationCountryId, previewAmount, sourceCountryId]);
 
   async function handleLogout() {
     if (authSession?.token) {
@@ -31,15 +97,50 @@ export default function Home() {
     router.push("/login");
   }
 
+  const selectedSourceCountry = senderCountries.find(
+    (country) => country.id === sourceCountryId,
+  );
+  const selectedDestinationCountry = destinationCountries.find(
+    (country) => country.id === destinationCountryId,
+  );
   const previewSendAmount = Number(previewAmount) > 0 ? Number(previewAmount) : 0;
-  const previewExchangeRate = 25.4;
-  const previewFee = 0;
-  const previewReceiveAmount = previewSendAmount * previewExchangeRate;
-  const previewTotalToPay = previewSendAmount + previewFee;
+  const previewExchangeRate = Number(rateEstimate?.exchange_rate ?? "25.4");
+  const previewFee = Number(rateEstimate?.fee_amount ?? "0");
+  const previewReceiveAmount = Number(
+    rateEstimate?.receive_amount ?? previewSendAmount * previewExchangeRate,
+  );
+  const previewTotalToPay = Number(
+    rateEstimate?.total_amount ?? previewSendAmount + previewFee,
+  );
+  const sourceCurrencyCode =
+    rateEstimate?.source_currency.code ?? selectedSourceCountry?.currency.code ?? "USD";
+  const destinationCurrencyCode =
+    rateEstimate?.destination_currency.code ??
+    selectedDestinationCountry?.currency.code ??
+    "ZMW";
+  const transferStartHref = authSession ? "/send" : "/start";
 
   function handlePreviewSendMoney() {
     window.sessionStorage.setItem("sendAmount", previewAmount);
-    router.push("/send");
+    if (sourceCountryId) {
+      window.sessionStorage.setItem("sourceCountryId", sourceCountryId);
+    }
+    if (destinationCountryId) {
+      window.sessionStorage.setItem("destinationCountryId", destinationCountryId);
+    }
+    router.push(transferStartHref);
+  }
+
+  function getFlagPath(country?: Country) {
+    const isoCode = country?.iso_code.toLowerCase();
+    const flagCode = isoCode === "uk" ? "gb" : isoCode;
+    return flagCode ? `/flags/${flagCode}.svg` : "/flags/us.svg";
+  }
+
+  function formatCurrencyAmount(value: number) {
+    return Number.isFinite(value)
+      ? value.toLocaleString("en-US", { maximumFractionDigits: 2 })
+      : "0";
   }
 
   const mapItems = [
@@ -83,10 +184,10 @@ export default function Home() {
               </>
             ) : (
               <>
-                <Link className="nav-button ghost" href="/login">
+                <Link className="nav-button ghost" href="/login?mode=login&next=/send">
                   Log in
                 </Link>
-                <Link className="nav-button solid" href="/send">
+                <Link className="nav-button solid" href={transferStartHref}>
                   Get started
                 </Link>
               </>
@@ -125,7 +226,10 @@ export default function Home() {
                 Log out
               </button>
             ) : (
-              <Link href="/login" onClick={() => setIsMobileMenuOpen(false)}>
+              <Link
+                href="/login?mode=login&next=/send"
+                onClick={() => setIsMobileMenuOpen(false)}
+              >
                 Log in
               </Link>
             )}
@@ -157,7 +261,7 @@ export default function Home() {
             </p>
 
             <div className="hero-buttons">
-              <Link className="hero-button solid" href="/send">
+              <Link className="hero-button solid" href={transferStartHref}>
                 Start a transfer
               </Link>
               <a className="hero-button ghost" href="#preview">
@@ -183,11 +287,21 @@ export default function Home() {
                   <div className="rate-currency-select">
                     <img
                       className="currency-flag-image"
-                      src="/flags/us.svg"
-                      alt="United States flag"
+                      src={getFlagPath(selectedSourceCountry)}
+                      alt=""
                     />
-                    <strong>USD</strong>
-                    <span aria-hidden="true">v</span>
+                    <select
+                      className="rate-country-select"
+                      aria-label="Sender country"
+                      value={sourceCountryId}
+                      onChange={(event) => setSourceCountryId(event.target.value)}
+                    >
+                      {senderCountries.map((country) => (
+                        <option key={country.id} value={country.id}>
+                          {country.currency.code}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               </div>
@@ -196,7 +310,10 @@ export default function Home() {
                 <span className="rate-dot" />
                 <div>
                   <span className="rate-badge">First transfer rate</span>
-                  <strong>1 USD = {previewExchangeRate.toFixed(2)} ZMW</strong>
+                  <strong>
+                    1 {sourceCurrencyCode} = {previewExchangeRate.toFixed(2)}{" "}
+                    {destinationCurrencyCode}
+                  </strong>
                 </div>
               </div>
 
@@ -204,18 +321,26 @@ export default function Home() {
                 <label className="rate-field-label">They get</label>
                 <div className="rate-field-control">
                   <div className="rate-receive-amount">
-                    {previewReceiveAmount.toLocaleString("en-US", {
-                      maximumFractionDigits: 2,
-                    })}
+                    {formatCurrencyAmount(previewReceiveAmount)}
                   </div>
                   <div className="rate-currency-select">
                     <img
                       className="currency-flag-image"
-                      src="/flags/zm.svg"
-                      alt="Zambia flag"
+                      src={getFlagPath(selectedDestinationCountry)}
+                      alt=""
                     />
-                    <strong>ZMW</strong>
-                    <span aria-hidden="true">v</span>
+                    <select
+                      className="rate-country-select"
+                      aria-label="Destination country"
+                      value={destinationCountryId}
+                      onChange={(event) => setDestinationCountryId(event.target.value)}
+                    >
+                      {destinationCountries.map((country) => (
+                        <option key={country.id} value={country.id}>
+                          {country.currency.code}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               </div>
@@ -223,13 +348,14 @@ export default function Home() {
               <div className="receive-method-field">
                 <span>Receive method</span>
                 <strong>Mobile Money</strong>
-                <span aria-hidden="true">v</span>
               </div>
 
               <dl className="rate-summary-list">
                 <div>
                   <dt>Fee</dt>
-                  <dd>{previewFee.toFixed(2)} USD</dd>
+                  <dd>
+                    {previewFee.toFixed(2)} {sourceCurrencyCode}
+                  </dd>
                 </div>
                 <div>
                   <dt>Transfer time</dt>
@@ -237,16 +363,20 @@ export default function Home() {
                 </div>
                 <div>
                   <dt>Total to pay</dt>
-                  <dd>{previewTotalToPay.toFixed(2)} USD</dd>
+                  <dd>
+                    {previewTotalToPay.toFixed(2)} {sourceCurrencyCode}
+                  </dd>
                 </div>
               </dl>
+
+              {rateMessage ? <p className="rate-message">{rateMessage}</p> : null}
 
               <button
                 type="button"
                 className="preview-continue"
                 onClick={handlePreviewSendMoney}
               >
-                Send Money
+                Continue
               </button>
             </div>
           </div>
@@ -306,7 +436,7 @@ export default function Home() {
 
             <div className="footer-cta">
               <p>Ready to send?</p>
-              <Link href="/send">Start a transfer</Link>
+              <Link href={transferStartHref}>Start a transfer</Link>
             </div>
           </div>
 

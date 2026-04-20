@@ -3,13 +3,18 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
+import { AppNavbar } from "@/components/AppNavbar";
 import {
   formatApiError,
   getCurrentUser,
   loginCustomer,
   registerCustomer,
 } from "@/lib/api";
-import { clearAuthSession, isValidAuthSession, saveAuthSession } from "@/lib/auth";
+import {
+  clearCustomerSessionOnly,
+  isValidAuthSession,
+  saveAuthSession,
+} from "@/lib/auth";
 
 type AuthMode = "login" | "register";
 
@@ -27,7 +32,12 @@ export default function LoginPage() {
       setNextPath(next);
     }
 
-    clearAuthSession();
+    const requestedMode = params.get("mode");
+    if (requestedMode === "login" || requestedMode === "register") {
+      setMode(requestedMode);
+    }
+
+    clearCustomerSessionOnly();
   }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -64,80 +74,94 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="success-page">
-      <section className="success-card stack">
-        <div>
-          <p className="kicker">Customer access</p>
+    <>
+      <AppNavbar />
+      <main className="auth-page">
+        <section className="auth-shell">
+        <div className="auth-card auth-card-wide">
+          <div className="auth-icon">FX</div>
+          <p className="auth-eyebrow">Customer access</p>
           <h1>{mode === "login" ? "Log in" : "Create account"}</h1>
-          <p className="lede">
+          <p className="auth-copy">
             {mode === "login"
               ? "Use a customer account to send money, fund transactions, and track transfer status."
               : "Create your account with email and password, then continue to the send-money flow."}
           </p>
-        </div>
 
-        <div className="row">
-          <button
-            type="button"
-            className={mode === "login" ? undefined : "secondary-button"}
-            onClick={() => setMode("login")}
-          >
-            Log in
-          </button>
-          <button
-            type="button"
-            className={mode === "register" ? undefined : "secondary-button"}
-            onClick={() => setMode("register")}
-          >
-            Create account
-          </button>
-        </div>
+          <div className="auth-tabs">
+            <button
+              type="button"
+              className={mode === "login" ? "active" : ""}
+              onClick={() => setMode("login")}
+            >
+              Log in
+            </button>
+            <button
+              type="button"
+              className={mode === "register" ? "active" : ""}
+              onClick={() => setMode("register")}
+            >
+              Create account
+            </button>
+          </div>
 
-        <form className="stack" onSubmit={handleSubmit}>
-          <label>
-            Email
-            <input name="email" type="email" autoComplete="email" required />
-          </label>
-
-          <label>
-            Password
-            <input
-              name="password"
-              type="password"
-              autoComplete={mode === "login" ? "current-password" : "new-password"}
-              minLength={8}
-              required
-            />
-          </label>
-
-          {mode === "register" ? (
+          <form className="auth-form" onSubmit={handleSubmit}>
             <label>
-              Confirm password
+              Email
+              <input name="email" type="email" autoComplete="email" required />
+            </label>
+
+            <label>
+              Password
               <input
-                name="password_confirm"
+                name="password"
                 type="password"
-                autoComplete="new-password"
+                autoComplete={
+                  mode === "login" ? "current-password" : "new-password"
+                }
                 minLength={8}
                 required
               />
             </label>
-          ) : null}
 
-          {error ? <pre className="error small">{error}</pre> : null}
+            {mode === "register" ? (
+              <label>
+                Confirm password
+                <input
+                  name="password_confirm"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={8}
+                  required
+                />
+              </label>
+            ) : null}
 
-          <button type="submit" disabled={loading}>
-            {loading
-              ? "Please wait..."
-              : mode === "login"
-                ? "Log in"
-                : "Create customer account"}
-          </button>
-        </form>
+            {error ? <pre className="error small">{error}</pre> : null}
 
-        <Link className="text-link" href="/">
-          Back to send money
+            <button
+              type="submit"
+              className="auth-submit-button"
+              disabled={loading}
+            >
+              {loading
+                ? "Please wait..."
+                : mode === "login"
+                  ? "Log in"
+                  : "Create customer account"}
+            </button>
+          </form>
+
+          <p className="auth-note">
+            Staff and admin accounts should use Django admin.
+          </p>
+        </div>
+
+        <Link className="auth-back-link" href="/">
+          Back to homepage
         </Link>
-      </section>
-    </main>
+        </section>
+      </main>
+    </>
   );
 }

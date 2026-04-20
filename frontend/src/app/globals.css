@@ -268,6 +268,234 @@ h3 {
   padding: 24px;
 }
 
+.auth-page {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 32px 18px;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(16, 185, 129, 0.16), transparent 28%),
+    radial-gradient(circle at 82% 18%, rgba(20, 184, 166, 0.12), transparent 24%),
+    linear-gradient(135deg, #020617 0%, #0f172a 48%, #022c22 100%);
+  color: #fff;
+}
+
+.auth-page a {
+  text-decoration: none;
+}
+
+.auth-shell {
+  display: grid;
+  width: min(520px, 100%);
+  justify-items: center;
+  gap: 20px;
+}
+
+.auth-logo {
+  width: fit-content;
+}
+
+.auth-card {
+  display: grid;
+  width: 100%;
+  gap: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.34);
+  color: #0f172a;
+  padding: 32px;
+}
+
+.auth-card-wide {
+  max-width: 560px;
+}
+
+.auth-icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  justify-self: center;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #34d399, #14b8a6);
+  box-shadow: 0 14px 34px rgba(16, 185, 129, 0.22);
+  color: #020617;
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.auth-eyebrow {
+  margin: 0;
+  color: #047857;
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.auth-card h1 {
+  max-width: none;
+  margin: 0;
+  color: #0f172a;
+  font-size: clamp(2.1rem, 7vw, 3.1rem);
+  font-weight: 900;
+  line-height: 1;
+  text-align: center;
+}
+
+.auth-copy {
+  max-width: 420px;
+  margin: 0 auto;
+  color: #475569;
+  font-size: 0.98rem;
+  line-height: 1.65;
+  text-align: center;
+}
+
+.auth-transfer-preview {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #ccfbf1;
+  border-radius: 16px;
+  background: #f0fdfa;
+  padding: 14px 16px;
+}
+
+.auth-transfer-preview span {
+  color: #047857;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.auth-transfer-preview strong {
+  color: #0f172a;
+  font-size: 1.08rem;
+}
+
+.auth-primary-action,
+.auth-secondary-action,
+.auth-submit-button {
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 0.92rem;
+  font-weight: 900;
+  padding: 14px 18px;
+}
+
+.auth-primary-action,
+.auth-submit-button {
+  border: 0;
+  background: linear-gradient(90deg, #10b981, #14b8a6);
+  box-shadow: 0 16px 32px rgba(16, 185, 129, 0.24);
+  color: #fff;
+}
+
+.auth-secondary-action {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #0f172a;
+}
+
+.auth-inline,
+.auth-muted,
+.auth-note {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.auth-inline a {
+  color: #047857;
+  font-weight: 900;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #94a3b8;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  height: 1px;
+  flex: 1;
+  background: #e2e8f0;
+  content: "";
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  padding: 5px;
+}
+
+.auth-tabs button {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  color: #475569;
+  font-size: 0.9rem;
+  font-weight: 900;
+  padding: 11px 14px;
+}
+
+.auth-tabs button.active {
+  background: #fff;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+  color: #047857;
+}
+
+.auth-form {
+  display: grid;
+  gap: 14px;
+}
+
+.auth-form label {
+  color: #334155;
+  font-size: 0.88rem;
+}
+
+.auth-form input {
+  border-color: #e2e8f0;
+  border-radius: 16px;
+  color: #0f172a;
+  padding: 13px 14px;
+}
+
+.auth-form input:focus {
+  border-color: #10b981;
+  outline: 3px solid rgba(16, 185, 129, 0.16);
+}
+
+.auth-form .error {
+  white-space: pre-wrap;
+}
+
+.auth-back-link {
+  color: #cbd5e1;
+  font-size: 0.88rem;
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .table-wrap {
   width: 100%;
   overflow-x: auto;
@@ -351,6 +579,10 @@ th {
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(2, 6, 23, 0.72);
   backdrop-filter: blur(18px);
+}
+
+.premium-nav a {
+  text-decoration: none;
 }
 
 .premium-nav-inner {
@@ -588,13 +820,44 @@ th {
 }
 
 .premium-hero {
+  position: relative;
   display: grid;
   width: min(1280px, 100%);
   margin: 0 auto;
   grid-template-columns: minmax(0, 1fr) minmax(380px, 0.88fr);
   gap: 40px;
   align-items: center;
+  overflow: hidden;
   padding: 56px 24px 44px;
+}
+
+.premium-hero::before {
+  position: absolute;
+  inset: 18px 16% 18px 28%;
+  border-radius: 32px;
+  background:
+    linear-gradient(90deg, rgba(2, 6, 23, 0.86), rgba(2, 6, 23, 0.2) 42%, rgba(2, 44, 34, 0.72)),
+    url("/images/family-mobile-transfer.jpg") 32% center / cover;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  content: "";
+  filter: saturate(0.9) contrast(1.05);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 22%, #000 82%, transparent 100%);
+  opacity: 0.5;
+}
+
+.premium-hero::after {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 75% 28%, rgba(20, 184, 166, 0.16), transparent 28%),
+    linear-gradient(90deg, rgba(2, 6, 23, 0.45), transparent 54%);
+  content: "";
+  pointer-events: none;
+}
+
+.premium-hero > * {
+  position: relative;
+  z-index: 1;
 }
 
 .premium-pill {
@@ -864,7 +1127,7 @@ th {
 .rate-field-control {
   display: grid;
   min-height: 78px;
-  grid-template-columns: minmax(0, 1fr) 120px;
+  grid-template-columns: minmax(0, 1fr) 136px;
   overflow: hidden;
   border: 2px solid #064e3b;
   border-radius: 10px;
@@ -890,15 +1153,39 @@ th {
 }
 
 .rate-currency-select {
-  display: flex;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 8px;
   background: #064e3b;
   color: #fff;
   font-size: 0.92rem;
   font-weight: 800;
   padding: 12px;
+}
+
+.rate-country-select {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.92rem;
+  font-weight: 900;
+  padding: 0;
+}
+
+.rate-country-select:focus {
+  outline: 2px solid rgba(255, 255, 255, 0.45);
+  outline-offset: 3px;
+}
+
+.rate-country-select option {
+  color: #0f172a;
 }
 
 .currency-flag {
@@ -1018,6 +1305,16 @@ th {
 
 .rate-summary-list div:nth-child(2) dd {
   color: #047857;
+}
+
+.rate-message {
+  margin: 0;
+  border-radius: 10px;
+  background: #fef2f2;
+  color: #b42318;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  padding: 10px 12px;
 }
 
 .preview-label {
@@ -1431,6 +1728,16 @@ th {
     grid-template-columns: 1fr;
   }
 
+  .premium-hero::before {
+    inset: 12px 14px auto;
+    height: 70%;
+    background:
+      linear-gradient(180deg, rgba(2, 6, 23, 0.24), rgba(2, 6, 23, 0.68)),
+      url("/images/family-mobile-transfer.jpg") 42% center / cover;
+    mask-image: linear-gradient(180deg, #000 0%, #000 70%, transparent 100%);
+    opacity: 0.58;
+  }
+
   .premium-send-layout {
     grid-template-columns: 1fr;
   }
@@ -1441,6 +1748,11 @@ th {
 
   .transfer-card {
     max-width: 720px;
+  }
+
+  .preview-card {
+    width: min(440px, 100%);
+    justify-self: center;
   }
 
   .trust-grid,
@@ -1458,6 +1770,13 @@ th {
 }
 
 @media (max-width: 640px) {
+  .premium-home {
+    background:
+      radial-gradient(circle at 18% 12%, rgba(16, 185, 129, 0.16), transparent 28%),
+      radial-gradient(circle at 82% 18%, rgba(20, 184, 166, 0.12), transparent 24%),
+      linear-gradient(135deg, #020617 0%, #0f172a 48%, #022c22 100%);
+  }
+
   .premium-nav-inner {
     align-items: center;
     flex-direction: row;
@@ -1468,7 +1787,28 @@ th {
   }
 
   .premium-hero {
-    padding-top: 36px;
+    gap: 34px;
+    padding-top: 56px;
+    padding-bottom: 48px;
+  }
+
+  .premium-hero .premium-pill {
+    display: none;
+  }
+
+  .premium-hero > div:first-child {
+    display: grid;
+    justify-items: center;
+    text-align: center;
+  }
+
+  .premium-hero .lede {
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .hero-buttons {
+    justify-content: center;
   }
 
   .premium-home h1 {
@@ -1497,6 +1837,13 @@ th {
 
   .rate-currency-select {
     justify-content: center;
+    min-height: 54px;
+  }
+
+  .rate-amount-input,
+  .rate-receive-amount {
+    justify-content: center;
+    text-align: center;
   }
 
   .premium-footer-grid {

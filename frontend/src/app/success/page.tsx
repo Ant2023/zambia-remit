@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { AppNavbar } from "@/components/AppNavbar";
 import type { Transfer } from "@/lib/api";
 import { getTransfer } from "@/lib/api";
 import { getStoredAuthSession } from "@/lib/auth";
@@ -32,7 +33,9 @@ export default function SuccessPage() {
     transfer?.funding_status !== "received";
 
   return (
-    <main className="success-page">
+    <>
+      <AppNavbar />
+      <main className="success-page">
       <section className="success-card stack">
         <p className="kicker">
           {needsFunding ? "Transfer created" : "Transfer funded"}
@@ -89,6 +92,7 @@ export default function SuccessPage() {
           View transaction history
         </Link>
       </section>
-    </main>
+      </main>
+    </>
   );
 }
