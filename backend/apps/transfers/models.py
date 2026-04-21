@@ -764,6 +764,7 @@ class TransferPaymentFraudRule(BaseModel):
     payment_method = models.CharField(
         max_length=32,
         choices=(
+            ("credit_card", "Credit card"),
             ("debit_card", "Debit card"),
             ("bank_transfer", "Bank transfer"),
         ),
@@ -831,6 +832,7 @@ class TransferPaymentFraudRule(BaseModel):
 
 class TransferPaymentInstruction(BaseModel):
     class PaymentMethod(models.TextChoices):
+        CREDIT_CARD = "credit_card", "Credit card"
         DEBIT_CARD = "debit_card", "Debit card"
         BANK_TRANSFER = "bank_transfer", "Bank transfer"
 

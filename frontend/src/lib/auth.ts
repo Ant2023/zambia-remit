@@ -2,6 +2,7 @@ import type { AuthSession } from "@/lib/api";
 
 const AUTH_SESSION_KEY = "mbongoPayCustomerSession";
 const LEGACY_AUTH_SESSION_KEY = "zambiaRemitCustomerSession";
+export const AUTH_SESSION_EVENT = "mbongoPayAuthSessionChanged";
 const FLOW_SESSION_KEYS = [
   "latestTransfer",
   "createdRecipient",
@@ -52,6 +53,7 @@ export function isValidAuthSession(session: unknown): session is AuthSession {
 export function saveAuthSession(session: AuthSession) {
   window.sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
   window.sessionStorage.removeItem(LEGACY_AUTH_SESSION_KEY);
+  notifyAuthSessionChanged();
 }
 
 export function clearTransferDraft() {
@@ -61,9 +63,14 @@ export function clearTransferDraft() {
 export function clearCustomerSessionOnly() {
   window.sessionStorage.removeItem(AUTH_SESSION_KEY);
   window.sessionStorage.removeItem(LEGACY_AUTH_SESSION_KEY);
+  notifyAuthSessionChanged();
 }
 
 export function clearAuthSession() {
   clearCustomerSessionOnly();
   clearTransferDraft();
+}
+
+function notifyAuthSessionChanged() {
+  window.dispatchEvent(new Event(AUTH_SESSION_EVENT));
 }

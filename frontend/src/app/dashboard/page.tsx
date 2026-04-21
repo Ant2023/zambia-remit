@@ -10,7 +10,7 @@ import {
   getSenderProfile,
   getTransfers,
 } from "@/lib/api";
-import { getStoredAuthSession } from "@/lib/auth";
+import { getStoredAuthSession, saveAuthSession } from "@/lib/auth";
 
 const ACTIVE_TRANSFER_STATUSES = new Set([
   "awaiting_funding",
@@ -63,6 +63,13 @@ function getProfileCompletionPercent(profile: SenderProfile | null) {
   ];
 
   return Math.round((items.filter(Boolean).length / items.length) * 100);
+}
+
+function getDashboardFirstName(
+  profile: SenderProfile | null,
+  authSession: AuthSession | null,
+) {
+  return (profile?.first_name || authSession?.user.first_name || "").trim();
 }
 
 function getTransferAction(transfer: Transfer) {
@@ -121,6 +128,7 @@ export default function DashboardPage() {
     awaitingFundingTransfer: awaitingFundingTransfers[0] ?? null,
     recipientCount: recipients.length,
   });
+  const dashboardFirstName = getDashboardFirstName(profile, authSession);
 
   async function loadDashboard(token = authSession?.token) {
     setError("");
@@ -142,6 +150,23 @@ export default function DashboardPage() {
       setProfile(profileData);
       setRecipients(recipientData);
       setTransfers(transferData);
+
+      setAuthSession((currentSession) => {
+        if (!currentSession) {
+          return currentSession;
+        }
+
+        const updatedSession = {
+          ...currentSession,
+          user: {
+            ...currentSession.user,
+            first_name: profileData.first_name,
+            last_name: profileData.last_name,
+          },
+        };
+        saveAuthSession(updatedSession);
+        return updatedSession;
+      });
     } catch (apiError) {
       setError(formatApiError(apiError));
     } finally {
@@ -160,8 +185,8 @@ export default function DashboardPage() {
             <div>
               <p className="kicker">Dashboard</p>
               <h1>
-                {authSession?.user.first_name
-                  ? `Welcome back, ${authSession.user.first_name}`
+                {dashboardFirstName
+                  ? `Welcome back, ${dashboardFirstName}`
                   : "Welcome back"}
               </h1>
               <p className="lede">

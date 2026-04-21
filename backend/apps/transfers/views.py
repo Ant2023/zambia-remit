@@ -270,7 +270,11 @@ class TransferFundingView(generics.GenericAPIView):
 
         if (
             payment_instruction
-            and payment_method == TransferPaymentInstruction.PaymentMethod.DEBIT_CARD
+            and payment_method
+            in {
+                TransferPaymentInstruction.PaymentMethod.CREDIT_CARD,
+                TransferPaymentInstruction.PaymentMethod.DEBIT_CARD,
+            }
             and payment_instruction.status
             not in {
                 TransferPaymentInstruction.Status.AUTHORIZED,
@@ -412,7 +416,10 @@ class TransferPaymentAuthorizationView(generics.GenericAPIView):
                 {"instruction_id": "Payment instruction not found for this transfer."},
             ) from exc
 
-        if instruction.payment_method != TransferPaymentInstruction.PaymentMethod.DEBIT_CARD:
+        if instruction.payment_method not in {
+            TransferPaymentInstruction.PaymentMethod.CREDIT_CARD,
+            TransferPaymentInstruction.PaymentMethod.DEBIT_CARD,
+        }:
             raise ValidationError(
                 {"instruction_id": "Only card instructions support authorization."},
             )
@@ -435,6 +442,7 @@ class TransferPaymentAuthorizationView(generics.GenericAPIView):
             expiry_month=serializer.validated_data["expiry_month"],
             expiry_year=serializer.validated_data["expiry_year"],
             cvv=serializer.validated_data["cvv"],
+            billing_postal_code=serializer.validated_data["billing_postal_code"],
         )
         apply_payment_instruction_status(
             instruction,

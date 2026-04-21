@@ -27,6 +27,17 @@ import {
 } from "@/lib/auth";
 import type { PayoutMethod } from "@/lib/transfer-options";
 
+type SendStep = "market" | "recipient" | "review";
+type RecipientEntryMode = "saved" | "new";
+
+function getRecipientName(recipient?: Recipient) {
+  if (!recipient) {
+    return "";
+  }
+
+  return `${recipient.first_name} ${recipient.last_name}`.trim();
+}
+
 export default function SendPage() {
   const router = useRouter();
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
@@ -49,6 +60,9 @@ export default function SendPage() {
   const [error, setError] = useState("");
   const [rateError, setRateError] = useState("");
   const [flowKey, setFlowKey] = useState(0);
+  const [activeStep, setActiveStep] = useState<SendStep>("market");
+  const [recipientEntryMode, setRecipientEntryMode] =
+    useState<RecipientEntryMode>("saved");
 
   useEffect(() => {
     const session = getStoredAuthSession();
@@ -77,12 +91,23 @@ export default function SendPage() {
     const savedReason = window.sessionStorage.getItem("reasonForSending") ?? "";
     const savedProvider = window.sessionStorage.getItem("providerName") ?? "";
 
-    if (savedRecipient) {
-      setRecipient(JSON.parse(savedRecipient) as Recipient);
+    const restoredRecipient = savedRecipient
+      ? (JSON.parse(savedRecipient) as Recipient)
+      : undefined;
+    const restoredQuote = savedQuote ? (JSON.parse(savedQuote) as Quote) : undefined;
+
+    if (restoredRecipient) {
+      setRecipient(restoredRecipient);
     }
 
-    if (savedQuote) {
-      setQuote(JSON.parse(savedQuote) as Quote);
+    if (restoredQuote) {
+      setQuote(restoredQuote);
+    }
+
+    if (restoredRecipient && restoredQuote) {
+      setActiveStep("review");
+    } else if (restoredRecipient) {
+      setActiveStep("recipient");
     }
 
     if (savedPayoutMethod === "mobile_money" || savedPayoutMethod === "bank_deposit") {
@@ -179,9 +204,51 @@ export default function SendPage() {
   const selectedDestinationCountry = destinationCountries.find(
     (country) => country.id === destinationCountryId,
   );
+  const destinationSavedRecipients = selectedDestinationCountry
+    ? savedRecipients.filter(
+        (savedRecipient) =>
+          savedRecipient.country.id === selectedDestinationCountry.id,
+      )
+    : [];
+  const hasSavedRecipients = destinationSavedRecipients.length > 0;
+  const savedRecipientOptionAvailable = hasSavedRecipients || loadingRecipients;
+  const visibleRecipientEntryMode =
+    savedRecipientOptionAvailable && recipientEntryMode === "saved"
+      ? "saved"
+      : "new";
 
   const exchangeRate = rateEstimate?.exchange_rate ?? "";
   const estimatedReceiveAmount = rateEstimate?.receive_amount ?? "";
+  const isReadyForReview = Boolean(recipient && quote);
+  const amountNumber = Number(sendAmount);
+  const canContinueToRecipient =
+    Boolean(sourceCountryId && destinationCountryId && rateEstimate) &&
+    amountNumber > 0 &&
+    !loadingRate &&
+    !rateError;
+  const sourceCountryName =
+    rateEstimate?.source_country.name ??
+    senderCountries.find((country) => country.id === sourceCountryId)?.name ??
+    "Sender country";
+  const destinationCountryName =
+    selectedDestinationCountry?.name ??
+    rateEstimate?.destination_country.name ??
+    "Destination country";
+  const sourceCurrencyCode = rateEstimate?.source_currency.code ?? "";
+  const destinationCurrencyCode = rateEstimate?.destination_currency.code ?? "";
+  const recipientName = getRecipientName(recipient);
+
+  useEffect(() => {
+    if (activeStep !== "recipient") {
+      return;
+    }
+
+    if (loadingRecipients) {
+      return;
+    }
+
+    setRecipientEntryMode(hasSavedRecipients ? "saved" : "new");
+  }, [activeStep, destinationCountryId, hasSavedRecipients, loadingRecipients]);
 
   function resetFlowState() {
     setSendAmount("");
@@ -194,6 +261,8 @@ export default function SendPage() {
     setError("");
     setRateError("");
     setFlowKey((value) => value + 1);
+    setActiveStep("market");
+    setRecipientEntryMode("saved");
   }
 
   function clearTransactionDetails() {
@@ -214,6 +283,15 @@ export default function SendPage() {
     setSendAmount(value);
     window.sessionStorage.setItem("sendAmount", value);
     clearTransactionDetails();
+  }
+
+  function handleMarketContinue() {
+    if (!canContinueToRecipient) {
+      return;
+    }
+
+    setActiveStep("recipient");
+    setRecipientEntryMode(savedRecipientOptionAvailable ? "saved" : "new");
   }
 
   async function loadSavedRecipients(token = authSession?.token) {
@@ -300,6 +378,7 @@ export default function SendPage() {
   function handleQuoteCreated(createdQuote: Quote) {
     setQuote(createdQuote);
     window.sessionStorage.setItem("createdQuote", JSON.stringify(createdQuote));
+    setActiveStep("review");
   }
 
   return (
@@ -336,72 +415,174 @@ export default function SendPage() {
               {error ? <pre className="error small">{error}</pre> : null}
               {rateError ? <pre className="error small">{rateError}</pre> : null}
 
-              <MarketSelector
-                key={`market-${flowKey}`}
-                senderCountries={senderCountries}
-                destinationCountries={destinationCountries}
-                sourceCountryId={sourceCountryId}
-                destinationCountryId={destinationCountryId}
-                sendAmount={sendAmount}
-                exchangeRate={exchangeRate}
-                estimatedReceiveAmount={estimatedReceiveAmount}
-                sourceCurrencyCode={rateEstimate?.source_currency.code}
-                destinationCurrencyCode={rateEstimate?.destination_currency.code}
-                onSourceCountryChange={(value) => {
-                  setSourceCountryId(value);
-                  window.sessionStorage.setItem("sourceCountryId", value);
-                  clearTransactionDetails();
-                }}
-                onDestinationCountryChange={(value) => {
-                  setDestinationCountryId(value);
-                  window.sessionStorage.setItem("destinationCountryId", value);
-                  clearSelectedRecipientDetails();
-                  clearTransactionDetails();
-                }}
-                onSendAmountChange={handleSendAmountChange}
-              />
+              {activeStep === "market" ? (
+                <>
+                  <MarketSelector
+                    key={`market-${flowKey}`}
+                    senderCountries={senderCountries}
+                    destinationCountries={destinationCountries}
+                    sourceCountryId={sourceCountryId}
+                    destinationCountryId={destinationCountryId}
+                    sendAmount={sendAmount}
+                    exchangeRate={exchangeRate}
+                    estimatedReceiveAmount={estimatedReceiveAmount}
+                    sourceCurrencyCode={sourceCurrencyCode}
+                    destinationCurrencyCode={destinationCurrencyCode}
+                    onSourceCountryChange={(value) => {
+                      setSourceCountryId(value);
+                      window.sessionStorage.setItem("sourceCountryId", value);
+                      clearTransactionDetails();
+                    }}
+                    onDestinationCountryChange={(value) => {
+                      setDestinationCountryId(value);
+                      window.sessionStorage.setItem("destinationCountryId", value);
+                      clearSelectedRecipientDetails();
+                      clearTransactionDetails();
+                      setRecipientEntryMode("saved");
+                    }}
+                    onSendAmountChange={handleSendAmountChange}
+                  />
 
-              <section className="panel stack">
-                <div className="row">
-                  <span className="step-number">2</span>
-                  <div>
-                    <h2>Recipient details</h2>
-                    <p className="muted small">
-                      Use a saved recipient or add someone new.
-                    </p>
+                  <div className="step-next-action">
+                    <button
+                      type="button"
+                      onClick={handleMarketContinue}
+                      disabled={!canContinueToRecipient}
+                    >
+                      {loadingRate ? "Checking rate..." : "Continue to recipient"}
+                    </button>
                   </div>
-                </div>
+                </>
+              ) : (
+                <section className="step-summary" aria-label="Amount and countries summary">
+                  <div className="step-summary-content">
+                    <span className="step-number">1</span>
+                    <div>
+                      <p>Amount and countries</p>
+                      <h2>
+                        {sendAmount || "0.00"}
+                        {sourceCurrencyCode ? ` ${sourceCurrencyCode}` : ""} to{" "}
+                        {destinationCountryName}
+                      </h2>
+                      <span>
+                        {sourceCountryName}
+                        {estimatedReceiveAmount && destinationCurrencyCode
+                          ? ` - Recipient gets ${estimatedReceiveAmount} ${destinationCurrencyCode}`
+                          : ""}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="step-summary-edit"
+                    onClick={() => setActiveStep("market")}
+                  >
+                    Edit
+                  </button>
+                </section>
+              )}
 
-                <SavedRecipientSelector
-                  key={`saved-recipient-${flowKey}`}
+              {activeStep === "recipient" ? (
+                <section className="panel stack">
+                  <div className="row">
+                    <span className="step-number">2</span>
+                    <div>
+                      <h2>Recipient details</h2>
+                      <p className="muted small">
+                        Choose a saved recipient or add someone new.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div
+                    className="recipient-mode-toggle"
+                    role="tablist"
+                    aria-label="Recipient options"
+                  >
+                    <button
+                      type="button"
+                      className={
+                        visibleRecipientEntryMode === "saved"
+                          ? "secondary-button active"
+                          : "secondary-button"
+                      }
+                      disabled={!savedRecipientOptionAvailable}
+                      aria-selected={visibleRecipientEntryMode === "saved"}
+                      role="tab"
+                      onClick={() => setRecipientEntryMode("saved")}
+                    >
+                      Use saved recipient
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        visibleRecipientEntryMode === "new"
+                          ? "secondary-button active"
+                          : "secondary-button"
+                      }
+                      aria-selected={visibleRecipientEntryMode === "new"}
+                      role="tab"
+                      onClick={() => setRecipientEntryMode("new")}
+                    >
+                      Add new recipient
+                    </button>
+                  </div>
+
+                  {visibleRecipientEntryMode === "saved" ? (
+                    <SavedRecipientSelector
+                      key={`saved-recipient-${flowKey}`}
+                      authToken={authSession?.token}
+                      destinationCountry={selectedDestinationCountry}
+                      loadingRecipients={loadingRecipients}
+                      recipients={savedRecipients}
+                      onSelected={prepareRecipientReview}
+                    />
+                  ) : (
+                    <RecipientForm
+                      key={`recipient-${flowKey}`}
+                      authToken={authSession?.token}
+                      destinationCountry={selectedDestinationCountry}
+                      showHeading={false}
+                      onCreated={handleRecipientCreated}
+                    />
+                  )}
+                </section>
+              ) : activeStep === "review" && recipient ? (
+                <section className="step-summary" aria-label="Recipient summary">
+                  <div className="step-summary-content">
+                    <span className="step-number">2</span>
+                    <div>
+                      <p>Recipient details</p>
+                      <h2>{recipientName || "Saved recipient"}</h2>
+                      <span>
+                        {quote?.payout_method === "bank_deposit"
+                          ? "Bank deposit"
+                          : "Mobile money"}
+                        {providerName ? ` - ${providerName}` : ""}
+                        {reasonForSending ? ` - ${reasonForSending}` : ""}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="step-summary-edit"
+                    onClick={() => setActiveStep("recipient")}
+                  >
+                    Edit
+                  </button>
+                </section>
+              ) : null}
+
+              {activeStep === "review" && isReadyForReview ? (
+                <TransferConfirmation
+                  key={`confirm-${flowKey}`}
                   authToken={authSession?.token}
-                  destinationCountry={selectedDestinationCountry}
-                  loadingRecipients={loadingRecipients}
-                  recipients={savedRecipients}
-                  onSelected={prepareRecipientReview}
+                  recipient={recipient}
+                  quote={quote}
+                  reasonForSending={reasonForSending}
+                  providerName={providerName}
                 />
-
-                <div className="recipient-divider">
-                  <span>or add a new recipient</span>
-                </div>
-
-                <RecipientForm
-                  key={`recipient-${flowKey}`}
-                  authToken={authSession?.token}
-                  destinationCountry={selectedDestinationCountry}
-                  showHeading={false}
-                  onCreated={handleRecipientCreated}
-                />
-              </section>
-
-              <TransferConfirmation
-                key={`confirm-${flowKey}`}
-                authToken={authSession?.token}
-                recipient={recipient}
-                quote={quote}
-                reasonForSending={reasonForSending}
-                providerName={providerName}
-              />
+              ) : null}
             </div>
           </div>
 

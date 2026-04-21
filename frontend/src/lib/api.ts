@@ -320,7 +320,7 @@ export type OperationalTransfer = Transfer & {
   payout_events: PayoutEvent[];
 };
 
-export type MockPaymentMethod = "debit_card" | "bank_transfer";
+export type MockPaymentMethod = "credit_card" | "debit_card" | "bank_transfer";
 
 export type PaymentInstructionDetails = {
   title?: string;
@@ -351,6 +351,7 @@ export type PaymentInstructionDetails = {
   authorization_masked_card?: string;
   authorization_expiry_month?: number;
   authorization_expiry_year?: number;
+  authorization_billing_postal_code?: string;
   authorization_reference?: string;
   last_authorization_status?: string;
   last_authorization_message?: string;
@@ -465,6 +466,7 @@ export type CardPaymentAuthorizationPayload = {
   expiry_month: number;
   expiry_year: number;
   cvv: string;
+  billing_postal_code: string;
 };
 
 export type RecipientPayload = {
@@ -542,16 +544,47 @@ async function apiFetch<T>(
 
   const contentType = response.headers.get("content-type") ?? "";
   const responseText = await response.text();
-  const data =
-    responseText && contentType.includes("application/json")
-      ? JSON.parse(responseText)
-      : responseText;
+  const data = parseResponseBody(responseText, contentType);
 
   if (!response.ok) {
     throw new ApiError("API request failed", response.status, data);
   }
 
   return data as T;
+}
+
+function parseResponseBody(responseText: string, contentType: string) {
+  if (!responseText) {
+    return "";
+  }
+
+  if (contentType.includes("application/json")) {
+    try {
+      return JSON.parse(responseText);
+    } catch {
+      return {
+        detail: "The server returned an unreadable response. Please try again.",
+      };
+    }
+  }
+
+  if (looksLikeHtml(responseText)) {
+    return {
+      detail: "The server returned an error page. Please check the backend and try again.",
+    };
+  }
+
+  return responseText;
+}
+
+function looksLikeHtml(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized.startsWith("<!doctype html") ||
+    normalized.startsWith("<html") ||
+    normalized.includes("<body") ||
+    normalized.includes("server error")
+  );
 }
 
 export function registerCustomer(payload: CustomerRegistrationPayload) {
@@ -1001,6 +1034,10 @@ function formatErrorDetails(details: unknown): string {
   }
 
   if (typeof details === "string") {
+    if (looksLikeHtml(details)) {
+      return "The server returned an error page. Please check the backend and try again.";
+    }
+
     return details || "Something went wrong. Please try again.";
   }
 

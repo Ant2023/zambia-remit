@@ -77,7 +77,7 @@ export function TransferConfirmation({
         <div>
           <h2>Review transaction</h2>
           <p className="muted small">
-            Check the details before you send the money.
+            Check the details before continuing to payment.
           </p>
         </div>
       </div>
@@ -150,7 +150,11 @@ export function TransferConfirmation({
         {error ? <pre className="error small">{error}</pre> : null}
 
         <button type="submit" disabled={loading || !recipient || !quote || !authToken}>
-          {loading ? "Creating transaction..." : "Send money"}
+          {loading
+            ? "Creating transaction..."
+            : quote
+              ? `Continue to payment of ${totalAmount} ${quote.source_currency.code}`
+              : "Continue to payment"}
         </button>
       </form>
     </section>

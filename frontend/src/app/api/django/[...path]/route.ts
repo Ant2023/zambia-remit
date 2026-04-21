@@ -73,6 +73,13 @@ async function proxyToDjango(request: Request, context: RouteContext) {
     responseHeaders.set("www-authenticate", wwwAuthenticate);
   }
 
+  if (response.status === 204 || response.status === 304) {
+    return new Response(null, {
+      status: response.status,
+      headers: responseHeaders,
+    });
+  }
+
   return new Response(responseBody, {
     status: response.status,
     headers: responseHeaders,

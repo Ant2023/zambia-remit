@@ -82,6 +82,7 @@ class CardPaymentAuthorizationSerializer(serializers.Serializer):
     expiry_month = serializers.IntegerField(min_value=1, max_value=12)
     expiry_year = serializers.IntegerField(min_value=2024, max_value=2100)
     cvv = serializers.CharField(min_length=3, max_length=4)
+    billing_postal_code = serializers.CharField(max_length=16)
 
     def validate_cardholder_name(self, value):
         value = value.strip()
@@ -100,6 +101,12 @@ class CardPaymentAuthorizationSerializer(serializers.Serializer):
         if len(digits_only) not in {3, 4}:
             raise serializers.ValidationError("Enter a valid security code.")
         return digits_only
+
+    def validate_billing_postal_code(self, value):
+        value = value.strip()
+        if len(value) < 3:
+            raise serializers.ValidationError("Enter a valid billing ZIP or postal code.")
+        return value
 
 
 class PaymentWebhookEventCreateSerializer(serializers.Serializer):

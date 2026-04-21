@@ -218,6 +218,7 @@ class CoreTransferProductTests(APITestCase):
                 "expiry_month": 12,
                 "expiry_year": 2030,
                 "cvv": "123",
+                "billing_postal_code": "80202",
             },
             format="json",
         )
@@ -271,8 +272,30 @@ class CoreTransferProductTests(APITestCase):
             "mock_embedded_card",
         )
         self.assertEqual(instruction.instructions["next_action"], "authorize_card")
-        self.assertEqual(len(instruction.instructions["card_fields"]), 5)
+        self.assertEqual(len(instruction.instructions["card_fields"]), 6)
         self.assertEqual(instruction.instructions["test_cards"][0]["outcome"], "authorized")
+
+    def test_credit_card_payment_instruction_uses_card_processor(self):
+        transfer = self.create_transfer()
+        self.client.force_authenticate(self.sender)
+
+        response = self.client.post(
+            reverse("transfer-payment-instructions", kwargs={"pk": transfer.pk}),
+            {"payment_method": TransferPaymentInstruction.PaymentMethod.CREDIT_CARD},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        instruction = TransferPaymentInstruction.objects.get(id=response.data["id"])
+        self.assertEqual(
+            instruction.status,
+            TransferPaymentInstruction.Status.PENDING_AUTHORIZATION,
+        )
+        self.assertEqual(instruction.provider_name, "mock_card_processor")
+        self.assertEqual(
+            instruction.instructions["integration_mode"],
+            "mock_embedded_card",
+        )
 
     def test_card_authorization_endpoint_marks_instruction_authorized(self):
         transfer = self.create_transfer()
@@ -299,6 +322,7 @@ class CoreTransferProductTests(APITestCase):
                 "expiry_month": 12,
                 "expiry_year": 2030,
                 "cvv": "123",
+                "billing_postal_code": "80202",
             },
             format="json",
         )
@@ -343,6 +367,7 @@ class CoreTransferProductTests(APITestCase):
                 "expiry_month": 12,
                 "expiry_year": 2030,
                 "cvv": "123",
+                "billing_postal_code": "80202",
             },
             format="json",
         )
@@ -441,6 +466,7 @@ class CoreTransferProductTests(APITestCase):
                 "expiry_month": 12,
                 "expiry_year": 2030,
                 "cvv": "123",
+                "billing_postal_code": "80202",
             },
             format="json",
         )
@@ -489,6 +515,7 @@ class CoreTransferProductTests(APITestCase):
                 "expiry_month": 12,
                 "expiry_year": 2030,
                 "cvv": "123",
+                "billing_postal_code": "80202",
             },
             format="json",
         )
@@ -539,6 +566,7 @@ class CoreTransferProductTests(APITestCase):
                     "expiry_month": 12,
                     "expiry_year": 2030,
                     "cvv": "123",
+                    "billing_postal_code": "80202",
                 },
                 format="json",
             )

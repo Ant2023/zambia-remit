@@ -4,8 +4,22 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { AuthSession } from "@/lib/api";
-import { logoutCustomer } from "@/lib/api";
-import { clearAuthSession, getStoredAuthSession } from "@/lib/auth";
+import { getCurrentUser, logoutCustomer } from "@/lib/api";
+import {
+  AUTH_SESSION_EVENT,
+  clearAuthSession,
+  getStoredAuthSession,
+  saveAuthSession,
+} from "@/lib/auth";
+
+function getAccountLabel(session: AuthSession | null) {
+  const name = [session?.user.first_name, session?.user.last_name]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
+  return name || session?.user.email || "";
+}
 
 export function AppNavbar() {
   const router = useRouter();
@@ -13,7 +27,51 @@ export function AppNavbar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   useEffect(() => {
-    setAuthSession(getStoredAuthSession());
+    let isMounted = true;
+
+    function syncStoredSession() {
+      const session = getStoredAuthSession();
+      setAuthSession(session);
+      return session;
+    }
+
+    async function refreshCurrentUser(session: AuthSession | null) {
+      if (!session?.token) {
+        return;
+      }
+
+      try {
+        const user = await getCurrentUser(session.token);
+        if (!isMounted) {
+          return;
+        }
+
+        const refreshedSession = { token: session.token, user };
+        setAuthSession(refreshedSession);
+
+        if (getAccountLabel(refreshedSession) !== getAccountLabel(session)) {
+          saveAuthSession(refreshedSession);
+        }
+      } catch {
+        // Keep the navbar usable if the account refresh fails.
+      }
+    }
+
+    const session = syncStoredSession();
+    void refreshCurrentUser(session);
+
+    function handleSessionChange() {
+      syncStoredSession();
+    }
+
+    window.addEventListener(AUTH_SESSION_EVENT, handleSessionChange);
+    window.addEventListener("storage", handleSessionChange);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener(AUTH_SESSION_EVENT, handleSessionChange);
+      window.removeEventListener("storage", handleSessionChange);
+    };
   }, []);
 
   async function handleLogout() {
@@ -33,6 +91,7 @@ export function AppNavbar() {
 
   const isStaff = Boolean(authSession?.user.is_staff);
   const startHref = isStaff ? "/operations" : authSession ? "/send?new=1" : "/start";
+  const accountLabel = getAccountLabel(authSession);
 
   return (
     <header className="premium-nav">
@@ -64,7 +123,7 @@ export function AppNavbar() {
         <div className="premium-actions">
           {authSession ? (
             <>
-              <span className="signed-in-label">{authSession.user.email}</span>
+              <span className="signed-in-label">{accountLabel}</span>
               <button
                 type="button"
                 className="nav-button ghost"

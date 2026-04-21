@@ -25,13 +25,53 @@ import {
 } from "@/lib/api";
 import { getStoredAuthSession, saveAuthSession } from "@/lib/auth";
 
-const paymentMethods: Array<{ value: MockPaymentMethod; label: string }> = [
+type SelectedPaymentMethod = MockPaymentMethod | "";
+
+const paymentMethods: Array<{
+  value: MockPaymentMethod;
+  label: string;
+}> = [
+  { value: "credit_card", label: "Credit card" },
   { value: "debit_card", label: "Debit card" },
   { value: "bank_transfer", label: "Bank transfer" },
 ];
 
-function formatProviderName(value: string) {
-  return value.replaceAll("_", " ");
+const cardPaymentMethods = new Set<MockPaymentMethod>([
+  "credit_card",
+  "debit_card",
+]);
+
+const sandboxCardAuthorization = {
+  card_number: "4242 4242 4242 4242",
+  expiry_month: 12,
+  expiry_year: 2030,
+  cvv: "123",
+};
+
+function isCardPaymentMethod(value?: SelectedPaymentMethod | null) {
+  return value ? cardPaymentMethods.has(value) : false;
+}
+
+function getUserDisplayName(user?: AuthSession["user"]) {
+  if (!user) {
+    return "";
+  }
+
+  return [user.first_name, user.last_name].filter(Boolean).join(" ").trim();
+}
+
+function getSenderDisplayName(
+  authSession: AuthSession | null,
+  senderProfile: SenderProfile | null,
+) {
+  return (
+    [senderProfile?.first_name, senderProfile?.last_name]
+      .filter(Boolean)
+      .join(" ")
+      .trim() ||
+    getUserDisplayName(authSession?.user) ||
+    "MbongoPay customer"
+  );
 }
 
 function formatDate(value: string) {
@@ -54,17 +94,8 @@ export default function FundingPage() {
   const [editingSenderDetails, setEditingSenderDetails] = useState(false);
   const [paymentInstruction, setPaymentInstruction] =
     useState<PaymentInstruction | null>(null);
-  const [paymentMethod, setPaymentMethod] =
-    useState<MockPaymentMethod>("debit_card");
-  const [cardholderName, setCardholderName] = useState("");
-  const [cardNumber, setCardNumber] = useState("4242 4242 4242 4242");
-  const [expiryMonth, setExpiryMonth] = useState("12");
-  const [expiryYear, setExpiryYear] = useState("2030");
-  const [cvv, setCvv] = useState("123");
-  const [note, setNote] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<SelectedPaymentMethod>("");
   const [loading, setLoading] = useState(false);
-  const [loadingPaymentInstruction, setLoadingPaymentInstruction] = useState(false);
-  const [authorizingPayment, setAuthorizingPayment] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -86,9 +117,6 @@ export default function FundingPage() {
       if (!id || parsedTransfer.id === id) {
         setTransfer(parsedTransfer);
         setPaymentInstruction(parsedTransfer.latest_payment_instruction);
-        if (parsedTransfer.latest_payment_instruction) {
-          setPaymentMethod(parsedTransfer.latest_payment_instruction.payment_method);
-        }
       }
     }
 
@@ -142,9 +170,6 @@ export default function FundingPage() {
       const data = await getTransfer(id, token);
       setTransfer(data);
       setPaymentInstruction(data.latest_payment_instruction);
-      if (data.latest_payment_instruction) {
-        setPaymentMethod(data.latest_payment_instruction.payment_method);
-      }
       window.sessionStorage.setItem("latestTransfer", JSON.stringify(data));
     } catch (apiError) {
       setError(formatApiError(apiError));
@@ -153,151 +178,124 @@ export default function FundingPage() {
     }
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError("");
+  function syncPaymentInstruction(instruction: PaymentInstruction) {
+    setPaymentInstruction(instruction);
+    setTransfer((currentTransfer) =>
+      currentTransfer
+        ? {
+            ...currentTransfer,
+            latest_payment_instruction: instruction,
+          }
+        : currentTransfer,
+    );
+  }
+
+  function syncTransfer(updatedTransfer: Transfer) {
+    setTransfer(updatedTransfer);
+    window.sessionStorage.setItem(
+      "latestTransfer",
+      JSON.stringify(updatedTransfer),
+    );
+  }
+
+  async function ensurePaymentInstruction() {
+    const selectedMethod = paymentMethod;
 
     if (!transfer) {
-      setError("Load the transfer before marking it funded.");
-      return;
+      throw new Error("Load the transfer before choosing payment.");
     }
 
     if (!authSession?.token) {
-      setError("Log in with a customer account first.");
-      return;
+      throw new Error("Log in with a customer account first.");
     }
 
     if (!senderProfile?.is_complete) {
-      setError("Add sender details before funding this transaction.");
-      return;
+      throw new Error("Add sender details before paying for this transaction.");
     }
 
-    if (!paymentInstruction) {
-      setError("Prepare payment instructions before confirming funding.");
-      return;
+    if (!selectedMethod) {
+      throw new Error("Choose a payment method first.");
     }
 
+    if (paymentInstruction?.payment_method === selectedMethod) {
+      return paymentInstruction;
+    }
+
+    const instruction = await createPaymentInstruction(
+      transfer.id,
+      { payment_method: selectedMethod },
+      authSession.token,
+    );
+    syncPaymentInstruction(instruction);
+    return instruction;
+  }
+
+  async function completePayment(instruction: PaymentInstruction) {
+    if (!transfer) {
+      throw new Error("Load the transfer before completing payment.");
+    }
+
+    if (!authSession?.token) {
+      throw new Error("Log in with a customer account first.");
+    }
+
+    const updatedTransfer = await markTransferFunded(
+      transfer.id,
+      {
+        payment_method: instruction.payment_method,
+        payment_instruction_id: instruction.id,
+        note: "",
+      },
+      authSession.token,
+    );
+    syncTransfer(updatedTransfer);
+    router.push(`/success?transferId=${updatedTransfer.id}&funded=1`);
+  }
+
+  async function handlePaymentSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
     setLoading(true);
 
     try {
-      const updatedTransfer = await markTransferFunded(
-        transfer.id,
-        {
-          payment_method: paymentMethod,
-          payment_instruction_id: paymentInstruction.id,
-          note,
-        },
-        authSession.token,
-      );
-      setTransfer(updatedTransfer);
-      window.sessionStorage.setItem(
-        "latestTransfer",
-        JSON.stringify(updatedTransfer),
-      );
-      router.push(`/success?transferId=${updatedTransfer.id}&funded=1`);
+      const instruction = await ensurePaymentInstruction();
+
+      if (isCardPaymentMethod(instruction.payment_method)) {
+        const authorizedInstruction = await authorizeCardPaymentInstruction(
+          instruction.transfer,
+          instruction.id,
+          {
+            cardholder_name: getSenderDisplayName(authSession, senderProfile),
+            card_number: sandboxCardAuthorization.card_number,
+            expiry_month: sandboxCardAuthorization.expiry_month,
+            expiry_year: sandboxCardAuthorization.expiry_year,
+            cvv: sandboxCardAuthorization.cvv,
+            billing_postal_code: senderProfile?.postal_code?.trim() || "80202",
+          },
+          authSession?.token ?? "",
+        );
+        syncPaymentInstruction(authorizedInstruction);
+
+        if (
+          authorizedInstruction.status !== "authorized" &&
+          authorizedInstruction.status !== "paid"
+        ) {
+          setError(
+            authorizedInstruction.status_reason ||
+              "The card authorization failed. Try a different payment method.",
+          );
+          return;
+        }
+
+        await completePayment(authorizedInstruction);
+        return;
+      }
+
+      await completePayment(instruction);
     } catch (apiError) {
       setError(formatApiError(apiError));
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function handlePreparePaymentInstruction() {
-    setError("");
-
-    if (!transfer) {
-      setError("Load the transfer before preparing payment instructions.");
-      return;
-    }
-
-    if (!authSession?.token) {
-      setError("Log in with a customer account first.");
-      return;
-    }
-
-    if (!senderProfile?.is_complete) {
-      setError("Add sender details before preparing payment instructions.");
-      return;
-    }
-
-    setLoadingPaymentInstruction(true);
-
-    try {
-      const instruction = await createPaymentInstruction(
-        transfer.id,
-        { payment_method: paymentMethod },
-        authSession.token,
-      );
-      setPaymentInstruction(instruction);
-      setTransfer((currentTransfer) =>
-        currentTransfer
-          ? {
-              ...currentTransfer,
-              latest_payment_instruction: instruction,
-            }
-          : currentTransfer,
-      );
-    } catch (apiError) {
-      setError(formatApiError(apiError));
-    } finally {
-      setLoadingPaymentInstruction(false);
-    }
-  }
-
-  async function handleAuthorizePayment() {
-    setError("");
-
-    if (!transfer) {
-      setError("Load the transfer before authorizing payment.");
-      return;
-    }
-
-    if (!authSession?.token) {
-      setError("Log in with a customer account first.");
-      return;
-    }
-
-    if (!paymentInstruction) {
-      setError("Prepare payment instructions before authorizing payment.");
-      return;
-    }
-
-    if (
-      paymentInstruction.payment_method !== "debit_card" ||
-      paymentMethod !== "debit_card"
-    ) {
-      setError("Only debit card instructions support authorization.");
-      return;
-    }
-
-    setAuthorizingPayment(true);
-
-    try {
-      const authorizedInstruction = await authorizeCardPaymentInstruction(
-        transfer.id,
-        paymentInstruction.id,
-        {
-          cardholder_name: cardholderName.trim(),
-          card_number: cardNumber,
-          expiry_month: Number(expiryMonth),
-          expiry_year: Number(expiryYear),
-          cvv,
-        },
-        authSession.token,
-      );
-      setPaymentInstruction(authorizedInstruction);
-      setTransfer((currentTransfer) =>
-        currentTransfer
-          ? {
-              ...currentTransfer,
-              latest_payment_instruction: authorizedInstruction,
-            }
-          : currentTransfer,
-      );
-    } catch (apiError) {
-      setError(formatApiError(apiError));
-    } finally {
-      setAuthorizingPayment(false);
     }
   }
 
@@ -355,555 +353,282 @@ export default function FundingPage() {
   const isFunded =
     transfer?.status === "funding_received" ||
     transfer?.funding_status === "received";
-  const isCardPayment =
-    paymentMethod === "debit_card" ||
-    paymentInstruction?.payment_method === "debit_card";
-  const isCardAuthorized =
-    paymentInstruction?.status === "authorized" ||
-    paymentInstruction?.status === "paid";
-  const canConfirmFunding = Boolean(
+  const senderFirstName =
+    senderProfile?.first_name || authSession?.user.first_name || "";
+  const senderLastName =
+    senderProfile?.last_name || authSession?.user.last_name || "";
+  const signedInLabel =
+    getUserDisplayName(authSession?.user) || authSession?.user.email || "";
+  const canSubmitPayment = Boolean(
     transfer &&
       senderProfile?.is_complete &&
-      paymentInstruction &&
-      (paymentInstruction.payment_method !== "debit_card" || isCardAuthorized),
+      paymentMethod &&
+      authSession?.token &&
+      !isFunded,
   );
   const selectedPaymentMethodLabel =
     paymentMethods.find((method) => method.value === paymentMethod)?.label ??
-    "Payment";
+    "payment method";
+  const paymentButtonLabel = paymentMethod
+    ? isCardPaymentMethod(paymentMethod)
+      ? `Authorize ${selectedPaymentMethodLabel.toLowerCase()} and pay`
+      : `Pay with ${selectedPaymentMethodLabel.toLowerCase()}`
+    : "Choose payment method";
 
   return (
-    <>
+    <div className="premium-home">
       <AppNavbar />
-      <main className="page">
-      <div className="shell stack">
-        <header className="topbar">
+
+      <main className="premium-send-main">
+        <section className="send-intro">
           <div>
-            <p className="kicker">Funding</p>
-            <h1>Fund your transaction</h1>
+            <div className="premium-pill">Payment</div>
+            <h1>Pay for your transaction</h1>
             <p className="lede">
-              Choose a payment method and confirm that funding has been received
-              for this transaction.
+              Confirm your sender details, choose one payment method, and finish
+              the transfer.
             </p>
             <Link className="text-link" href="/history">
               View transaction history
             </Link>
           </div>
+        </section>
 
-          <section className="panel stack">
-            <h2>Customer account</h2>
-            {authSession ? (
-              <>
-                <p className="muted small">Signed in as {authSession.user.email}</p>
-                <button type="button" onClick={() => loadTransfer()}>
-                  {loading ? "Loading..." : "Refresh transaction"}
-                </button>
-              </>
-            ) : (
-              <>
-                <p className="muted small">Log in to fund this transaction.</p>
-                <Link href="/login">
-                  <button type="button">Log in</button>
-                </Link>
-              </>
-            )}
-          </section>
-        </header>
-
-        {error ? <pre className="error small">{error}</pre> : null}
-
-        <div className="grid">
-          <section className="panel stack">
-            <h2>Transaction summary</h2>
-
-            {transfer ? (
-              <dl className="summary-list">
-                <div>
-                  <dt>Reference</dt>
-                  <dd>{transfer.reference}</dd>
-                </div>
-                <div>
-                  <dt>Status</dt>
-                  <dd>{transfer.status_display}</dd>
-                </div>
-                <div>
-                  <dt>Funding</dt>
-                  <dd>{transfer.funding_status_display}</dd>
-                </div>
-                <div>
-                  <dt>Send amount</dt>
-                  <dd>{transfer.send_amount}</dd>
-                </div>
-                <div>
-                  <dt>Recipient receives</dt>
-                  <dd>{transfer.receive_amount}</dd>
-                </div>
-                <div>
-                  <dt>Created</dt>
-                  <dd>{formatDate(transfer.created_at)}</dd>
-                </div>
-              </dl>
-            ) : (
-                <p className="muted">Load the transaction to continue.</p>
-            )}
-          </section>
-
-          <div className="stack">
-            <section className="panel stack">
+        <section className="premium-send-layout">
+          <div className="transfer-card">
+            <div className="transfer-card-header">
               <div>
-                <p className="kicker">Sender details</p>
-                <h2>Confirm your information</h2>
-                <p className="muted small">
-                  These details are saved to your customer profile for future
-                  transfers.
-                </p>
+                <p>Secure payment step</p>
+                <h2>Sender and payment</h2>
               </div>
+              <span>{signedInLabel || "Customer"}</span>
+            </div>
 
-              {senderProfile?.is_complete && !editingSenderDetails ? (
-                <>
-                  <dl className="summary-list">
-                    <div>
-                      <dt>Name</dt>
-                      <dd>
-                        {senderProfile.first_name} {senderProfile.last_name}
-                      </dd>
+            <div className="transfer-flow">
+              {error ? <pre className="error small">{error}</pre> : null}
+
+              <section className="panel stack">
+                <div>
+                  <p className="kicker">Sender details</p>
+                  <h2>Confirm your information</h2>
+                  <p className="muted small">
+                    Your signup name is filled in already. Add anything still
+                    needed to complete the payment.
+                  </p>
+                </div>
+
+                {senderProfile?.is_complete && !editingSenderDetails ? (
+                  <>
+                    <dl className="summary-list">
+                      <div>
+                        <dt>Name</dt>
+                        <dd>
+                          {senderProfile.first_name} {senderProfile.last_name}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Phone</dt>
+                        <dd>{senderProfile.phone_number}</dd>
+                      </div>
+                      <div>
+                        <dt>Residence</dt>
+                        <dd>{senderProfile.country?.name ?? "Not provided"}</dd>
+                      </div>
+                    </dl>
+                    {!isFunded ? (
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => setEditingSenderDetails(true)}
+                      >
+                        Change sender details
+                      </button>
+                    ) : null}
+                  </>
+                ) : (
+                  <form
+                    key={senderProfile?.updated_at ?? "sender-details"}
+                    className="stack"
+                    onSubmit={handleSenderDetailsSubmit}
+                  >
+                    <div className="form-grid">
+                      <label>
+                        First name
+                        <input
+                          name="first_name"
+                          autoComplete="given-name"
+                          defaultValue={senderFirstName}
+                          required
+                        />
+                      </label>
+
+                      <label>
+                        Last name
+                        <input
+                          name="last_name"
+                          autoComplete="family-name"
+                          defaultValue={senderLastName}
+                          required
+                        />
+                      </label>
+
+                      <label>
+                        Phone number
+                        <input
+                          name="phone_number"
+                          autoComplete="tel"
+                          placeholder="+12025550123"
+                          defaultValue={senderProfile?.phone_number ?? ""}
+                          required
+                        />
+                      </label>
+
+                      <label>
+                        Country of residence
+                        <select
+                          name="country_id"
+                          defaultValue={senderProfile?.country?.id ?? ""}
+                          required
+                        >
+                          <option value="" disabled>
+                            Select country
+                          </option>
+                          {senderCountries.map((country) => (
+                            <option key={country.id} value={country.id}>
+                              {country.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                     </div>
-                    <div>
-                      <dt>Phone</dt>
-                      <dd>{senderProfile.phone_number}</dd>
+
+                    <div className="row">
+                      <button type="submit" disabled={loading || !authSession}>
+                        {loading ? "Saving..." : "Save sender details"}
+                      </button>
+                      {senderProfile?.is_complete ? (
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => setEditingSenderDetails(false)}
+                        >
+                          Cancel
+                        </button>
+                      ) : null}
                     </div>
-                    <div>
-                      <dt>Residence</dt>
-                      <dd>{senderProfile.country?.name ?? "Not provided"}</dd>
-                    </div>
-                  </dl>
-                  {!isFunded ? (
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => setEditingSenderDetails(true)}
-                    >
-                      Change sender details
-                    </button>
-                  ) : null}
-                </>
-              ) : (
-                <form
-                  key={senderProfile?.updated_at ?? "sender-details"}
-                  className="stack"
-                  onSubmit={handleSenderDetailsSubmit}
-                >
-                  <div className="form-grid">
-                    <label>
-                      First name
-                      <input
-                        name="first_name"
-                        autoComplete="given-name"
-                        defaultValue={senderProfile?.first_name ?? ""}
-                        required
-                      />
-                    </label>
+                  </form>
+                )}
+
+                <div className="section-divider" />
+
+                <div>
+                  <p className="kicker">Payment</p>
+                  <h2>Choose how to pay</h2>
+                  <p className="muted small">
+                    Select a payment method to activate the final button.
+                  </p>
+                </div>
+
+                {isFunded ? (
+                  <>
+                    <p className="success small">
+                      Funding has been received for this transaction.
+                    </p>
+                    <Link href={`/success?transferId=${transfer?.id ?? transferId}`}>
+                      <button type="button">Continue</button>
+                    </Link>
+                  </>
+                ) : (
+                  <form className="stack" onSubmit={handlePaymentSubmit}>
+                    {!senderProfile?.is_complete ? (
+                      <p className="notice small">
+                        Save sender details before completing payment.
+                      </p>
+                    ) : null}
 
                     <label>
-                      Last name
-                      <input
-                        name="last_name"
-                        autoComplete="family-name"
-                        defaultValue={senderProfile?.last_name ?? ""}
-                        required
-                      />
-                    </label>
-
-                    <label>
-                      Phone number
-                      <input
-                        name="phone_number"
-                        autoComplete="tel"
-                        placeholder="+12025550123"
-                        defaultValue={senderProfile?.phone_number ?? ""}
-                        required
-                      />
-                    </label>
-
-                    <label>
-                      Country of residence
+                      Payment method
                       <select
-                        name="country_id"
-                        defaultValue={senderProfile?.country?.id ?? ""}
-                        required
+                        value={paymentMethod}
+                        onChange={(event) => {
+                          const nextMethod = event.target.value as SelectedPaymentMethod;
+                          setPaymentMethod(nextMethod);
+                          if (paymentInstruction?.payment_method !== nextMethod) {
+                            setPaymentInstruction(null);
+                          }
+                        }}
                       >
                         <option value="" disabled>
-                          Select country
+                          Choose payment method
                         </option>
-                        {senderCountries.map((country) => (
-                          <option key={country.id} value={country.id}>
-                            {country.name}
+                        {paymentMethods.map((method) => (
+                          <option key={method.value} value={method.value}>
+                            {method.label}
                           </option>
                         ))}
                       </select>
                     </label>
-                  </div>
 
-                  <div className="row">
-                    <button type="submit" disabled={loading || !authSession}>
-                      {loading ? "Saving..." : "Save sender details"}
-                    </button>
-                    {senderProfile?.is_complete ? (
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => setEditingSenderDetails(false)}
-                      >
-                        Cancel
-                      </button>
-                    ) : null}
-                  </div>
-                </form>
-              )}
-            </section>
-
-            <section className="panel stack">
-              <h2>Payment instructions</h2>
-
-              {isFunded ? (
-                <>
-                  <p className="success small">
-                    Funding has been received for this transaction.
-                  </p>
-                  <Link href={`/success?transferId=${transfer?.id ?? transferId}`}>
-                    <button type="button">Continue</button>
-                  </Link>
-                </>
-              ) : (
-                <form className="stack" onSubmit={handleSubmit}>
-                  {!senderProfile?.is_complete ? (
-                    <p className="notice small">
-                      Add sender details above before confirming funding.
-                    </p>
-                  ) : null}
-
-                  <label>
-                    Payment method
-                    <select
-                      value={paymentMethod}
-                      onChange={(event) => {
-                        const nextMethod = event.target.value as MockPaymentMethod;
-                        setPaymentMethod(nextMethod);
-                        if (paymentInstruction?.payment_method !== nextMethod) {
-                          setPaymentInstruction(null);
-                        }
-                      }}
+                    <button
+                      type="submit"
+                      className={
+                        canSubmitPayment
+                          ? "payment-submit-button is-ready"
+                          : "payment-submit-button"
+                      }
+                      disabled={loading || !canSubmitPayment}
                     >
-                      {paymentMethods.map((method) => (
-                        <option key={method.value} value={method.value}>
-                          {method.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                      {loading ? "Processing..." : paymentButtonLabel}
+                    </button>
+                  </form>
+                )}
+              </section>
+            </div>
+          </div>
 
-                  {paymentInstruction ? (
-                    <div className="payment-instruction-box stack">
-                      <div>
-                        <p className="kicker">
-                          {paymentInstruction.status_display}
-                        </p>
-                        <h3>
-                          {paymentInstruction.instructions.title ??
-                            selectedPaymentMethodLabel}
-                        </h3>
-                        <p className="muted small">
-                          {paymentInstruction.instructions.summary ??
-                            "Use these details to fund the transfer."}
-                        </p>
-                      </div>
+          <div id="transfer-summary">
+            <section className="panel stack">
+              <p className="kicker">Transaction summary</p>
+              <h2>Review</h2>
 
-                      <dl className="summary-list">
-                        <div>
-                          <dt>Total to pay</dt>
-                          <dd>
-                            {paymentInstruction.amount}{" "}
-                            {paymentInstruction.currency.code}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>Payment reference</dt>
-                          <dd>{paymentInstruction.provider_reference}</dd>
-                        </div>
-                        <div>
-                          <dt>Provider</dt>
-                          <dd>{formatProviderName(paymentInstruction.provider_name)}</dd>
-                        </div>
-                        {paymentInstruction.instructions.processor_display_name ? (
-                          <div>
-                            <dt>Processor</dt>
-                            <dd>
-                              {paymentInstruction.instructions.processor_display_name}
-                            </dd>
-                          </div>
-                        ) : null}
-                        {paymentInstruction.instructions.session_reference ? (
-                          <div>
-                            <dt>Session</dt>
-                            <dd>
-                              {paymentInstruction.instructions.session_reference}
-                            </dd>
-                          </div>
-                        ) : null}
-                        {paymentInstruction.instructions.next_action ? (
-                          <div>
-                            <dt>Next action</dt>
-                            <dd>
-                              {paymentInstruction.instructions.next_action.replaceAll(
-                                "_",
-                                " ",
-                              )}
-                            </dd>
-                          </div>
-                        ) : null}
-                        {paymentInstruction.instructions.test_card ? (
-                          <div>
-                            <dt>Test card</dt>
-                            <dd>{paymentInstruction.instructions.test_card}</dd>
-                          </div>
-                        ) : null}
-                        {paymentInstruction.instructions.bank_name ? (
-                          <div>
-                            <dt>Bank</dt>
-                            <dd>{paymentInstruction.instructions.bank_name}</dd>
-                          </div>
-                        ) : null}
-                        {paymentInstruction.instructions.account_number ? (
-                          <div>
-                            <dt>Account number</dt>
-                            <dd>{paymentInstruction.instructions.account_number}</dd>
-                          </div>
-                        ) : null}
-                        {paymentInstruction.instructions.routing_number ? (
-                          <div>
-                            <dt>Routing number</dt>
-                            <dd>{paymentInstruction.instructions.routing_number}</dd>
-                          </div>
-                        ) : null}
-                      </dl>
-
-                      {paymentInstruction.instructions.steps?.length ? (
-                        <ol className="instruction-list">
-                          {paymentInstruction.instructions.steps.map((step) => (
-                            <li key={step}>{step}</li>
-                          ))}
-                        </ol>
-                      ) : null}
-
-                      {paymentInstruction.instructions.test_cards?.length ? (
-                        <div className="stack">
-                          <h3>Test outcomes</h3>
-                          <dl className="summary-list">
-                            {paymentInstruction.instructions.test_cards.map((card) => (
-                              <div key={card.number}>
-                                <dt>{card.number}</dt>
-                                <dd>
-                                  {card.outcome.replaceAll("_", " ")}
-                                  {card.description ? ` - ${card.description}` : ""}
-                                </dd>
-                              </div>
-                            ))}
-                          </dl>
-                        </div>
-                      ) : null}
-
-                      {paymentInstruction.instructions.authorization_masked_card ? (
-                        <dl className="summary-list">
-                          <div>
-                            <dt>Authorized card</dt>
-                            <dd>
-                              {paymentInstruction.instructions.authorization_masked_card}
-                            </dd>
-                          </div>
-                          {paymentInstruction.instructions.authorization_reference ? (
-                            <div>
-                              <dt>Authorization</dt>
-                              <dd>
-                                {
-                                  paymentInstruction.instructions
-                                    .authorization_reference
-                                }
-                              </dd>
-                            </div>
-                          ) : null}
-                        </dl>
-                      ) : null}
-
-                      {paymentInstruction.status === "pending_authorization" ? (
-                        <p className="notice small">
-                          Authorize the card before confirming that funding was
-                          received.
-                        </p>
-                      ) : null}
-
-                      {paymentInstruction.status === "requires_review" ? (
-                        <p className="notice small">
-                          This payment needs review before the transfer can move
-                          forward.
-                        </p>
-                      ) : null}
-
-                      {paymentInstruction.status === "failed" ? (
-                        <p className="error small">
-                          {paymentInstruction.status_reason ||
-                            "The card authorization failed. Try a different test card or prepare a new instruction."}
-                        </p>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <p className="notice small">
-                      Prepare payment instructions for {selectedPaymentMethodLabel}.
-                    </p>
-                  )}
-
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={
-                      loadingPaymentInstruction ||
-                      !transfer ||
-                      !senderProfile?.is_complete ||
-                      !authSession
-                    }
-                    onClick={handlePreparePaymentInstruction}
-                  >
-                    {loadingPaymentInstruction
-                      ? "Preparing..."
-                      : paymentInstruction
-                        ? "Prepare new instructions"
-                        : "Prepare payment instructions"}
-                  </button>
-
-                  {paymentInstruction &&
-                  paymentInstruction.payment_method === "debit_card" &&
-                  !isFunded ? (
-                    <div className="stack">
-                      <div>
-                        <p className="kicker">Card authorization</p>
-                        <h3>Authorize your debit card</h3>
-                        <p className="muted small">
-                          Use one of the available test cards to simulate an
-                          approved, declined, or review-required authorization.
-                        </p>
-                      </div>
-
-                      <div className="stack">
-                        <div className="form-grid">
-                          <label>
-                            Cardholder name
-                            <input
-                              value={cardholderName}
-                              onChange={(event) =>
-                                setCardholderName(event.target.value)
-                              }
-                              autoComplete="cc-name"
-                              placeholder="Sam Sender"
-                              required
-                            />
-                          </label>
-
-                          <label>
-                            Card number
-                            <input
-                              value={cardNumber}
-                              onChange={(event) =>
-                                setCardNumber(event.target.value)
-                              }
-                              autoComplete="cc-number"
-                              inputMode="numeric"
-                              placeholder="4242 4242 4242 4242"
-                              required
-                            />
-                          </label>
-
-                          <label>
-                            Expiry month
-                            <input
-                              value={expiryMonth}
-                              onChange={(event) =>
-                                setExpiryMonth(event.target.value)
-                              }
-                              autoComplete="cc-exp-month"
-                              inputMode="numeric"
-                              placeholder="12"
-                              required
-                            />
-                          </label>
-
-                          <label>
-                            Expiry year
-                            <input
-                              value={expiryYear}
-                              onChange={(event) =>
-                                setExpiryYear(event.target.value)
-                              }
-                              autoComplete="cc-exp-year"
-                              inputMode="numeric"
-                              placeholder="2030"
-                              required
-                            />
-                          </label>
-
-                          <label>
-                            Security code
-                            <input
-                              value={cvv}
-                              onChange={(event) => setCvv(event.target.value)}
-                              autoComplete="cc-csc"
-                              inputMode="numeric"
-                              placeholder="123"
-                              required
-                            />
-                          </label>
-                        </div>
-
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          disabled={
-                            authorizingPayment ||
-                            !cardholderName.trim() ||
-                            !cardNumber.trim() ||
-                            !expiryMonth.trim() ||
-                            !expiryYear.trim() ||
-                            !cvv.trim()
-                          }
-                          onClick={() => void handleAuthorizePayment()}
-                        >
-                          {authorizingPayment ? "Authorizing..." : "Authorize card"}
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  <label>
-                    Funding note
-                    <textarea
-                      rows={3}
-                      value={note}
-                      onChange={(event) => setNote(event.target.value)}
-                      placeholder="Optional note for this funding event"
-                    />
-                  </label>
-
-                  <button type="submit" disabled={loading || !canConfirmFunding}>
-                    {loading
-                      ? "Confirming..."
-                      : isCardPayment && !isCardAuthorized
-                        ? "Authorize card to continue"
-                        : "Confirm funding received"}
-                  </button>
-                </form>
+              {transfer ? (
+                <dl className="summary-list">
+                  <div>
+                    <dt>Reference</dt>
+                    <dd>{transfer.reference}</dd>
+                  </div>
+                  <div>
+                    <dt>Status</dt>
+                    <dd>{transfer.status_display}</dd>
+                  </div>
+                  <div>
+                    <dt>Funding</dt>
+                    <dd>{transfer.funding_status_display}</dd>
+                  </div>
+                  <div>
+                    <dt>Send amount</dt>
+                    <dd>{transfer.send_amount}</dd>
+                  </div>
+                  <div>
+                    <dt>Recipient receives</dt>
+                    <dd>{transfer.receive_amount}</dd>
+                  </div>
+                  <div>
+                    <dt>Created</dt>
+                    <dd>{formatDate(transfer.created_at)}</dd>
+                  </div>
+                </dl>
+              ) : (
+                <p className="muted small">Load the transaction to continue.</p>
               )}
+
+              <button type="button" onClick={() => loadTransfer()}>
+                {loading ? "Loading..." : "Refresh transaction"}
+              </button>
             </section>
           </div>
-        </div>
-      </div>
+        </section>
       </main>
-    </>
+    </div>
   );
 }

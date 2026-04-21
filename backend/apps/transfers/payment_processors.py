@@ -43,6 +43,7 @@ class BasePaymentProcessor:
         expiry_month: int,
         expiry_year: int,
         cvv: str,
+        billing_postal_code: str,
     ) -> PaymentAuthorizationResult:
         raise NotImplementedError
 
@@ -91,6 +92,7 @@ class MockCardPaymentProcessor(BasePaymentProcessor):
                     {"name": "expiry_month", "label": "Expiry month"},
                     {"name": "expiry_year", "label": "Expiry year"},
                     {"name": "cvv", "label": "Security code"},
+                    {"name": "billing_postal_code", "label": "Billing ZIP/postal code"},
                 ],
                 "test_cards": [
                     {
@@ -121,6 +123,7 @@ class MockCardPaymentProcessor(BasePaymentProcessor):
         expiry_month: int,
         expiry_year: int,
         cvv: str,
+        billing_postal_code: str,
     ) -> PaymentAuthorizationResult:
         normalized_card_number = re.sub(r"\D", "", card_number)
         masked_card = f"**** **** **** {normalized_card_number[-4:]}"
@@ -129,6 +132,7 @@ class MockCardPaymentProcessor(BasePaymentProcessor):
             "authorization_masked_card": masked_card,
             "authorization_expiry_month": f"{expiry_month:02d}",
             "authorization_expiry_year": str(expiry_year),
+            "authorization_billing_postal_code": billing_postal_code,
             "processor_code": self.code,
             "processor_display_name": self.display_name,
         }
@@ -225,12 +229,16 @@ class ManualBankTransferProcessor(BasePaymentProcessor):
         expiry_month: int,
         expiry_year: int,
         cvv: str,
+        billing_postal_code: str,
     ) -> PaymentAuthorizationResult:
         raise ValueError("Bank transfer instructions do not support card authorization.")
 
 
 def get_payment_processor(payment_method: str) -> BasePaymentProcessor:
-    if payment_method == TransferPaymentInstruction.PaymentMethod.DEBIT_CARD:
+    if payment_method in {
+        TransferPaymentInstruction.PaymentMethod.CREDIT_CARD,
+        TransferPaymentInstruction.PaymentMethod.DEBIT_CARD,
+    }:
         processor_code = getattr(
             settings,
             "CARD_PAYMENT_PROCESSOR",
@@ -281,6 +289,7 @@ def authorize_payment_instruction(
     expiry_month: int,
     expiry_year: int,
     cvv: str,
+    billing_postal_code: str,
 ) -> PaymentAuthorizationResult:
     processor = get_payment_processor(instruction.payment_method)
     return processor.authorize_payment(
@@ -290,4 +299,5 @@ def authorize_payment_instruction(
         expiry_month=expiry_month,
         expiry_year=expiry_year,
         cvv=cvv,
+        billing_postal_code=billing_postal_code,
     )

@@ -237,7 +237,7 @@ export function SavedRecipientSelector({
           {error ? <pre className="error small">{error}</pre> : null}
 
           <button type="submit" disabled={loading || !authToken || !selectedRecipient}>
-            {loading ? "Preparing review..." : "Use saved recipient"}
+            {loading ? "Preparing review..." : "Continue to review"}
           </button>
         </form>
       ) : null}

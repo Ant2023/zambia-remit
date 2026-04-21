@@ -7,7 +7,6 @@ import {
   type AuthSession,
   type Country,
   type RateEstimate,
-  formatApiError,
   getDestinationCountries,
   getRateEstimate,
   getSenderCountries,
@@ -50,7 +49,9 @@ export default function Home() {
         setSourceCountryId(defaultSource?.id ?? "");
         setDestinationCountryId(defaultDestination?.id ?? "");
       } catch (error) {
-        setRateMessage(formatApiError(error));
+        setRateMessage(
+          "Live rate data is temporarily unavailable. Please try again shortly.",
+        );
       }
     }
 
@@ -76,7 +77,9 @@ export default function Home() {
         setRateEstimate(estimate);
       } catch (error) {
         setRateEstimate(undefined);
-        setRateMessage(formatApiError(error));
+        setRateMessage(
+          "Live rate data is temporarily unavailable. Please try again shortly.",
+        );
       }
     }
 
