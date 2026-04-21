@@ -16,8 +16,11 @@ from .models import (
     Transfer,
     TransferComplianceEvent,
     TransferComplianceFlag,
+    TransferPaymentAction,
     TransferPaymentInstruction,
     TransferPaymentWebhookEvent,
+    TransferPayoutAttempt,
+    TransferPayoutEvent,
     TransferSanctionsCheck,
     TransferStatusEvent,
 )
@@ -26,22 +29,36 @@ from .payment_processors import (
     get_payment_processor_by_provider,
     prepare_payment_instruction,
 )
+from .payment_fraud import evaluate_payment_fraud_rules
 from .serializers import (
     CardPaymentAuthorizationSerializer,
     TransferComplianceActionSerializer,
     MockFundingSerializer,
     PaymentWebhookEventCreateSerializer,
     PaymentWebhookEventSerializer,
+    PayoutWebhookEventCreateSerializer,
     StaffTransferSerializer,
     TransferAmlFlagReviewSerializer,
+    TransferPaymentActionCreateSerializer,
     TransferPaymentInstructionCreateSerializer,
     TransferPaymentInstructionSerializer,
+    TransferPayoutAttemptActionSerializer,
+    TransferPayoutAttemptSerializer,
+    TransferPayoutAttemptSubmitSerializer,
+    TransferPayoutStatusSyncSerializer,
     TransferSanctionsCheckReviewSerializer,
     TransferStatusTransitionSerializer,
     TransferSerializer,
 )
+from .payouts import (
+    retry_payout_attempt,
+    reverse_payout_attempt,
+    submit_payout_for_transfer,
+    sync_payout_attempt_status,
+)
 from .services import (
     apply_payment_instruction_status,
+    create_payment_action,
     process_payment_webhook_event,
     transition_transfer_status,
 )
@@ -58,6 +75,20 @@ def get_transfer_queryset(user):
     sanctions_check_queryset = TransferSanctionsCheck.objects.select_related(
         "reviewed_by",
     )
+    payment_action_queryset = TransferPaymentAction.objects.select_related(
+        "currency",
+        "requested_by",
+        "payment_instruction",
+    )
+    payout_attempt_queryset = TransferPayoutAttempt.objects.select_related(
+        "provider",
+        "currency",
+        "created_by",
+    )
+    payout_event_queryset = TransferPayoutEvent.objects.select_related(
+        "payout_attempt",
+        "performed_by",
+    )
     return (
         Transfer.objects.select_related(
             "sender",
@@ -70,15 +101,19 @@ def get_transfer_queryset(user):
             "destination_country__currency",
             "source_currency",
             "destination_currency",
+            "payout_provider",
         )
         .prefetch_related(
             "recipient__mobile_money_accounts",
             "recipient__bank_accounts",
             "status_events",
             "payment_instructions",
+            Prefetch("payout_attempts", queryset=payout_attempt_queryset),
+            Prefetch("payout_events", queryset=payout_event_queryset),
             Prefetch("compliance_flags", queryset=compliance_flag_queryset),
             Prefetch("compliance_events", queryset=compliance_event_queryset),
             Prefetch("sanctions_checks", queryset=sanctions_check_queryset),
+            Prefetch("payment_actions", queryset=payment_action_queryset),
         )
         .filter(sender=user)
     )
@@ -88,6 +123,13 @@ def get_payment_webhook_secret(provider_name: str) -> str:
     secrets_map = getattr(settings, "PAYMENT_WEBHOOK_SECRETS", {})
     if isinstance(secrets_map, dict):
         return str(secrets_map.get(provider_name, "")).strip()
+    return ""
+
+
+def get_payout_webhook_secret(provider_code: str) -> str:
+    secrets_map = getattr(settings, "PAYOUT_WEBHOOK_SECRETS", {})
+    if isinstance(secrets_map, dict):
+        return str(secrets_map.get(provider_code, "")).strip()
     return ""
 
 
@@ -102,6 +144,20 @@ def get_transfer_base_queryset():
     sanctions_check_queryset = TransferSanctionsCheck.objects.select_related(
         "reviewed_by",
     )
+    payment_action_queryset = TransferPaymentAction.objects.select_related(
+        "currency",
+        "requested_by",
+        "payment_instruction",
+    )
+    payout_attempt_queryset = TransferPayoutAttempt.objects.select_related(
+        "provider",
+        "currency",
+        "created_by",
+    )
+    payout_event_queryset = TransferPayoutEvent.objects.select_related(
+        "payout_attempt",
+        "performed_by",
+    )
     return Transfer.objects.select_related(
         "sender",
         "recipient",
@@ -113,14 +169,18 @@ def get_transfer_base_queryset():
         "destination_country__currency",
         "source_currency",
         "destination_currency",
+        "payout_provider",
     ).prefetch_related(
         "recipient__mobile_money_accounts",
         "recipient__bank_accounts",
         "status_events",
         "payment_instructions",
+        Prefetch("payout_attempts", queryset=payout_attempt_queryset),
+        Prefetch("payout_events", queryset=payout_event_queryset),
         Prefetch("compliance_flags", queryset=compliance_flag_queryset),
         Prefetch("compliance_events", queryset=compliance_event_queryset),
         Prefetch("sanctions_checks", queryset=sanctions_check_queryset),
+        Prefetch("payment_actions", queryset=payment_action_queryset),
     )
 
 
@@ -224,6 +284,22 @@ class TransferFundingView(generics.GenericAPIView):
                     ),
                 },
             )
+
+        if payment_instruction:
+            fraud_flags = evaluate_payment_fraud_rules(
+                payment_instruction,
+                changed_by=request.user,
+            )
+            payment_instruction.refresh_from_db()
+            if any(flag.metadata.get("action") == "hold" for flag in fraud_flags):
+                return Response(
+                    {
+                        "payment_instruction_id": (
+                            "Payment requires fraud review before funding can continue."
+                        ),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         if payment_instruction and not payment_instruction.is_completed:
             transfer = apply_payment_instruction_status(
@@ -369,6 +445,8 @@ class TransferPaymentAuthorizationView(generics.GenericAPIView):
             instruction_updates=authorization_result.instruction_updates,
         )
         instruction.refresh_from_db()
+        evaluate_payment_fraud_rules(instruction, changed_by=request.user)
+        instruction.refresh_from_db()
         return Response(TransferPaymentInstructionSerializer(instruction).data)
 
 
@@ -438,6 +516,73 @@ class TransferPaymentWebhookView(generics.GenericAPIView):
         )
 
 
+class TransferPayoutWebhookView(generics.GenericAPIView):
+    serializer_class = PayoutWebhookEventCreateSerializer
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        provider_code = self.kwargs["provider_code"]
+        expected_secret = get_payout_webhook_secret(provider_code)
+        if expected_secret:
+            provided_secret = request.headers.get("X-Payout-Webhook-Secret", "")
+            if not secrets.compare_digest(provided_secret, expected_secret):
+                return Response(
+                    {"detail": "Invalid webhook secret."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            attempt = TransferPayoutAttempt.objects.select_related(
+                "transfer",
+                "provider",
+                "currency",
+            ).get(
+                provider__code=provider_code,
+                provider_reference=data["provider_reference"],
+            )
+        except TransferPayoutAttempt.DoesNotExist as exc:
+            raise ValidationError(
+                {"provider_reference": "Payout attempt not found."},
+            ) from exc
+
+        duplicate = bool(
+            data["event_id"]
+            and attempt.events.filter(provider_event_id=data["event_id"]).exists()
+        )
+        if not duplicate:
+            attempt = sync_payout_attempt_status(
+                attempt,
+                target_status=data["payout_status"],
+                provider_event_id=data["event_id"],
+                provider_status=data.get("provider_status", ""),
+                status_reason=data.get("status_reason", ""),
+                metadata={
+                    "webhook_metadata": data.get("metadata", {}),
+                    "event_created_at": (
+                        data.get("event_created_at").isoformat()
+                        if data.get("event_created_at")
+                        else ""
+                    ),
+                },
+                note=(
+                    f"Payout webhook received from {provider_code}."
+                ),
+            )
+
+        return Response(
+            {
+                **TransferPayoutAttemptSerializer(attempt).data,
+                "duplicate": duplicate,
+            },
+        )
+
+
 class StaffTransferListView(generics.ListAPIView):
     serializer_class = StaffTransferSerializer
     permission_classes = [permissions.IsAdminUser]
@@ -488,6 +633,169 @@ class StaffTransferStatusTransitionView(generics.GenericAPIView):
             note=serializer.validated_data.get("note", "").strip(),
         )
         refreshed_transfer = self.get_queryset().get(pk=updated_transfer.pk)
+        return Response(StaffTransferSerializer(refreshed_transfer).data)
+
+
+class StaffTransferPaymentActionView(generics.GenericAPIView):
+    serializer_class = TransferPaymentActionCreateSerializer
+    permission_classes = [permissions.IsAdminUser]
+
+    def get_queryset(self):
+        return get_transfer_base_queryset()
+
+    @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        transfer = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        payment_instruction = None
+        payment_instruction_id = serializer.validated_data.get(
+            "payment_instruction_id",
+        )
+        if payment_instruction_id:
+            try:
+                payment_instruction = transfer.payment_instructions.select_related(
+                    "currency",
+                ).get(id=payment_instruction_id)
+            except TransferPaymentInstruction.DoesNotExist as exc:
+                raise ValidationError(
+                    {
+                        "payment_instruction_id": (
+                            "Payment instruction not found for this transfer."
+                        ),
+                    },
+                ) from exc
+
+        payment_action = create_payment_action(
+            transfer,
+            action=serializer.validated_data["action"],
+            payment_instruction=payment_instruction,
+            amount=serializer.validated_data.get("amount"),
+            reason_code=serializer.validated_data.get("reason_code", ""),
+            note=serializer.validated_data["note"],
+            requested_by=request.user,
+        )
+        refreshed_transfer = self.get_queryset().get(pk=payment_action.transfer_id)
+        return Response(StaffTransferSerializer(refreshed_transfer).data)
+
+
+class StaffTransferPayoutAttemptView(generics.GenericAPIView):
+    serializer_class = TransferPayoutAttemptSubmitSerializer
+    permission_classes = [permissions.IsAdminUser]
+
+    def get_queryset(self):
+        return get_transfer_base_queryset()
+
+    def get(self, request, *args, **kwargs):
+        transfer = self.get_object()
+        attempts = transfer.payout_attempts.all()
+        return Response(TransferPayoutAttemptSerializer(attempts, many=True).data)
+
+    @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        transfer = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        attempt = submit_payout_for_transfer(
+            transfer,
+            changed_by=request.user,
+            note=serializer.validated_data.get("note", ""),
+        )
+        refreshed_transfer = self.get_queryset().get(pk=attempt.transfer_id)
+        return Response(StaffTransferSerializer(refreshed_transfer).data)
+
+
+class StaffTransferPayoutStatusSyncView(generics.GenericAPIView):
+    serializer_class = TransferPayoutStatusSyncSerializer
+    permission_classes = [permissions.IsAdminUser]
+
+    def get_queryset(self):
+        return get_transfer_base_queryset()
+
+    def get_payout_attempt(self, transfer):
+        try:
+            return transfer.payout_attempts.get(id=self.kwargs["attempt_id"])
+        except TransferPayoutAttempt.DoesNotExist as exc:
+            raise ValidationError(
+                {"payout_attempt_id": "Payout attempt not found for this transfer."},
+            ) from exc
+
+    @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        transfer = self.get_object()
+        attempt = self.get_payout_attempt(transfer)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        updated_attempt = sync_payout_attempt_status(
+            attempt,
+            target_status=serializer.validated_data["payout_status"],
+            provider_event_id=serializer.validated_data.get("provider_event_id", ""),
+            provider_status=serializer.validated_data.get("provider_status", ""),
+            status_reason=serializer.validated_data.get("status_reason", ""),
+            metadata=serializer.validated_data.get("metadata", {}),
+            changed_by=request.user,
+            note=serializer.validated_data.get("status_reason", ""),
+        )
+        refreshed_transfer = self.get_queryset().get(pk=updated_attempt.transfer_id)
+        return Response(StaffTransferSerializer(refreshed_transfer).data)
+
+
+class StaffTransferPayoutRetryView(generics.GenericAPIView):
+    serializer_class = TransferPayoutAttemptActionSerializer
+    permission_classes = [permissions.IsAdminUser]
+
+    def get_queryset(self):
+        return get_transfer_base_queryset()
+
+    @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        transfer = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            attempt = transfer.payout_attempts.get(id=self.kwargs["attempt_id"])
+        except TransferPayoutAttempt.DoesNotExist as exc:
+            raise ValidationError(
+                {"payout_attempt_id": "Payout attempt not found for this transfer."},
+            ) from exc
+
+        updated_attempt = retry_payout_attempt(
+            attempt,
+            changed_by=request.user,
+            note=serializer.validated_data["note"],
+        )
+        refreshed_transfer = self.get_queryset().get(pk=updated_attempt.transfer_id)
+        return Response(StaffTransferSerializer(refreshed_transfer).data)
+
+
+class StaffTransferPayoutReverseView(generics.GenericAPIView):
+    serializer_class = TransferPayoutAttemptActionSerializer
+    permission_classes = [permissions.IsAdminUser]
+
+    def get_queryset(self):
+        return get_transfer_base_queryset()
+
+    @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        transfer = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            attempt = transfer.payout_attempts.get(id=self.kwargs["attempt_id"])
+        except TransferPayoutAttempt.DoesNotExist as exc:
+            raise ValidationError(
+                {"payout_attempt_id": "Payout attempt not found for this transfer."},
+            ) from exc
+
+        updated_attempt = reverse_payout_attempt(
+            attempt,
+            changed_by=request.user,
+            note=serializer.validated_data["note"],
+        )
+        refreshed_transfer = self.get_queryset().get(pk=updated_attempt.transfer_id)
         return Response(StaffTransferSerializer(refreshed_transfer).data)
 
 

@@ -6,7 +6,10 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from apps.countries.models import CountryCorridor
-from common.choices import PayoutMethod
+from apps.countries.services import (
+    validate_corridor_payout_method,
+    validate_payout_method_choice,
+)
 
 from .models import ExchangeRate, FeeRule
 
@@ -127,5 +130,4 @@ def calculate_receive_amount(send_amount: Decimal, exchange_rate: Decimal) -> De
 
 
 def validate_payout_method(payout_method: str) -> None:
-    if payout_method not in PayoutMethod.values:
-        raise serializers.ValidationError({"payout_method": "Unsupported payout method."})
+    validate_payout_method_choice(payout_method)

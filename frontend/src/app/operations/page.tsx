@@ -5,12 +5,17 @@ import { AppNavbar } from "@/components/AppNavbar";
 import type { AuthSession, OperationalTransfer } from "@/lib/api";
 import {
   applyTransferComplianceAction,
+  applyTransferPaymentAction,
   formatApiError,
   getCurrentUser,
   getOperationalTransfers,
   loginStaff,
+  retryTransferPayoutAttempt,
+  reverseTransferPayoutAttempt,
   reviewTransferAmlFlag,
   reviewTransferSanctionsCheck,
+  submitTransferPayout,
+  syncTransferPayoutAttempt,
   transitionTransferStatus,
 } from "@/lib/api";
 import { getStoredAuthSession, saveAuthSession } from "@/lib/auth";
@@ -36,6 +41,16 @@ const ACTIVE_STATUSES = new Set([
   "processing_payout",
   "paid_out",
 ]);
+
+const PAYOUT_SYNC_STATUSES = [
+  { value: "queued", label: "Queued" },
+  { value: "submitted", label: "Submitted" },
+  { value: "processing", label: "Processing" },
+  { value: "paid_out", label: "Paid out" },
+  { value: "failed", label: "Failed" },
+  { value: "reversed", label: "Reversed" },
+  { value: "retrying", label: "Retrying" },
+];
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", {
@@ -139,6 +154,15 @@ export default function OperationsPage() {
   const [transitionNote, setTransitionNote] = useState("");
   const [complianceAction, setComplianceAction] = useState("note");
   const [complianceNote, setComplianceNote] = useState("");
+  const [paymentAction, setPaymentAction] = useState("refund");
+  const [paymentActionReason, setPaymentActionReason] = useState("");
+  const [paymentActionNote, setPaymentActionNote] = useState("");
+  const [payoutSubmitNote, setPayoutSubmitNote] = useState("");
+  const [payoutSyncStatus, setPayoutSyncStatus] = useState("processing");
+  const [payoutProviderEventId, setPayoutProviderEventId] = useState("");
+  const [payoutProviderStatus, setPayoutProviderStatus] = useState("");
+  const [payoutStatusReason, setPayoutStatusReason] = useState("");
+  const [payoutActionNote, setPayoutActionNote] = useState("");
   const [selectedAmlFlagId, setSelectedAmlFlagId] = useState("");
   const [amlDecision, setAmlDecision] = useState("acknowledge");
   const [amlNote, setAmlNote] = useState("");
@@ -153,6 +177,11 @@ export default function OperationsPage() {
   const [signingIn, setSigningIn] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [applyingCompliance, setApplyingCompliance] = useState(false);
+  const [applyingPaymentAction, setApplyingPaymentAction] = useState(false);
+  const [submittingPayout, setSubmittingPayout] = useState(false);
+  const [syncingPayout, setSyncingPayout] = useState(false);
+  const [retryingPayout, setRetryingPayout] = useState(false);
+  const [reversingPayout, setReversingPayout] = useState(false);
   const [reviewingAml, setReviewingAml] = useState(false);
   const [reviewingSanctions, setReviewingSanctions] = useState(false);
   const [error, setError] = useState("");
@@ -173,6 +202,15 @@ export default function OperationsPage() {
     setTransitionNote("");
     setComplianceAction("note");
     setComplianceNote("");
+    setPaymentAction("refund");
+    setPaymentActionReason("");
+    setPaymentActionNote("");
+    setPayoutSubmitNote("");
+    setPayoutSyncStatus("processing");
+    setPayoutProviderEventId("");
+    setPayoutProviderStatus("");
+    setPayoutStatusReason("");
+    setPayoutActionNote("");
     setSelectedAmlFlagId(
       selectedTransfer?.compliance_flags.find((flag) => flag.category === "aml")?.id ??
         "",
@@ -237,6 +275,22 @@ export default function OperationsPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function refreshQueueWithTransfer(
+    updatedTransfer: OperationalTransfer,
+    token: string,
+  ) {
+    const refreshedTransfers = await getOperationalTransfers(token, {
+      status: statusFilter,
+      q: searchTerm.trim(),
+    });
+
+    setTransfers(refreshedTransfers);
+    setSelectedTransfer(
+      refreshedTransfers.find((transfer) => transfer.id === updatedTransfer.id) ??
+        updatedTransfer,
+    );
   }
 
   async function handleStaffLogin(event: FormEvent<HTMLFormElement>) {
@@ -354,6 +408,172 @@ export default function OperationsPage() {
     }
   }
 
+  async function handlePaymentAction(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setActionMessage("");
+
+    if (
+      !authSession?.token ||
+      !selectedTransfer ||
+      !selectedTransfer.latest_payment_instruction
+    ) {
+      return;
+    }
+
+    setApplyingPaymentAction(true);
+
+    try {
+      const updatedTransfer = await applyTransferPaymentAction(
+        selectedTransfer.id,
+        {
+          action: paymentAction,
+          payment_instruction_id: selectedTransfer.latest_payment_instruction.id,
+          reason_code: paymentActionReason.trim(),
+          note: paymentActionNote.trim(),
+        },
+        authSession.token,
+      );
+      const refreshedTransfers = await getOperationalTransfers(authSession.token, {
+        status: statusFilter,
+        q: searchTerm.trim(),
+      });
+
+      setTransfers(refreshedTransfers);
+      setSelectedTransfer(
+        refreshedTransfers.find((transfer) => transfer.id === updatedTransfer.id) ??
+          updatedTransfer,
+      );
+      setPaymentActionNote("");
+      setActionMessage(`${updatedTransfer.reference} payment action completed.`);
+    } catch (apiError) {
+      setError(formatApiError(apiError));
+    } finally {
+      setApplyingPaymentAction(false);
+    }
+  }
+
+  async function handleSubmitPayout(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setActionMessage("");
+
+    if (!authSession?.token || !selectedTransfer) {
+      return;
+    }
+
+    setSubmittingPayout(true);
+
+    try {
+      const updatedTransfer = await submitTransferPayout(
+        selectedTransfer.id,
+        { note: payoutSubmitNote.trim() },
+        authSession.token,
+      );
+      await refreshQueueWithTransfer(updatedTransfer, authSession.token);
+      setPayoutSubmitNote("");
+      setActionMessage(`${updatedTransfer.reference} payout submitted.`);
+    } catch (apiError) {
+      setError(formatApiError(apiError));
+    } finally {
+      setSubmittingPayout(false);
+    }
+  }
+
+  async function handlePayoutSync(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setActionMessage("");
+
+    const latestAttempt = selectedTransfer?.latest_payout_attempt;
+    if (!authSession?.token || !selectedTransfer || !latestAttempt) {
+      return;
+    }
+
+    setSyncingPayout(true);
+
+    try {
+      const updatedTransfer = await syncTransferPayoutAttempt(
+        selectedTransfer.id,
+        latestAttempt.id,
+        {
+          payout_status: payoutSyncStatus,
+          provider_event_id: payoutProviderEventId.trim(),
+          provider_status: payoutProviderStatus.trim(),
+          status_reason: payoutStatusReason.trim(),
+        },
+        authSession.token,
+      );
+      await refreshQueueWithTransfer(updatedTransfer, authSession.token);
+      setPayoutProviderEventId("");
+      setPayoutProviderStatus("");
+      setPayoutStatusReason("");
+      setActionMessage(`${updatedTransfer.reference} payout status updated.`);
+    } catch (apiError) {
+      setError(formatApiError(apiError));
+    } finally {
+      setSyncingPayout(false);
+    }
+  }
+
+  async function handlePayoutRetry(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setActionMessage("");
+
+    const latestAttempt = selectedTransfer?.latest_payout_attempt;
+    if (!authSession?.token || !selectedTransfer || !latestAttempt) {
+      return;
+    }
+
+    setRetryingPayout(true);
+
+    try {
+      const updatedTransfer = await retryTransferPayoutAttempt(
+        selectedTransfer.id,
+        latestAttempt.id,
+        { note: payoutActionNote.trim() },
+        authSession.token,
+      );
+      await refreshQueueWithTransfer(updatedTransfer, authSession.token);
+      setPayoutActionNote("");
+      setActionMessage(`${updatedTransfer.reference} payout retry submitted.`);
+    } catch (apiError) {
+      setError(formatApiError(apiError));
+    } finally {
+      setRetryingPayout(false);
+    }
+  }
+
+  async function handlePayoutReverse(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setActionMessage("");
+
+    const latestAttempt = selectedTransfer?.latest_payout_attempt;
+    if (!authSession?.token || !selectedTransfer || !latestAttempt) {
+      return;
+    }
+
+    setReversingPayout(true);
+
+    try {
+      const updatedTransfer = await reverseTransferPayoutAttempt(
+        selectedTransfer.id,
+        latestAttempt.id,
+        { note: payoutActionNote.trim() },
+        authSession.token,
+      );
+      await refreshQueueWithTransfer(updatedTransfer, authSession.token);
+      setPayoutActionNote("");
+      setActionMessage(`${updatedTransfer.reference} payout reversed.`);
+    } catch (apiError) {
+      setError(formatApiError(apiError));
+    } finally {
+      setReversingPayout(false);
+    }
+  }
+
   async function handleAmlReview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -450,6 +670,8 @@ export default function OperationsPage() {
     selectedTransfer?.sanctions_checks.find(
       (check) => check.id === selectedSanctionsCheckId,
     ) ?? selectedTransfer?.sanctions_checks[0];
+  const latestPaymentInstruction = selectedTransfer?.latest_payment_instruction;
+  const latestPayoutAttempt = selectedTransfer?.latest_payout_attempt;
 
   useEffect(() => {
     if (!selectedAmlFlag) {
@@ -497,6 +719,20 @@ export default function OperationsPage() {
     setSanctionsProviderReference(selectedSanctionsCheck.provider_reference);
     setSanctionsMatchScore(selectedSanctionsCheck.match_score ?? "");
   }, [selectedSanctionsCheck?.id]);
+
+  useEffect(() => {
+    if (!latestPayoutAttempt) {
+      return;
+    }
+
+    setPayoutSyncStatus(
+      latestPayoutAttempt.status === "submitted"
+        ? "processing"
+        : latestPayoutAttempt.status,
+    );
+    setPayoutProviderStatus(latestPayoutAttempt.provider_status);
+    setPayoutStatusReason(latestPayoutAttempt.status_reason);
+  }, [latestPayoutAttempt?.id]);
 
   return (
     <>
@@ -716,6 +952,336 @@ export default function OperationsPage() {
                           </dd>
                         </div>
                       </dl>
+
+                      <section className="stack">
+                        <h3>Payment</h3>
+                        {latestPaymentInstruction ? (
+                          <>
+                            <dl className="summary-list">
+                              <div>
+                                <dt>Method</dt>
+                                <dd>
+                                  {latestPaymentInstruction.payment_method_display}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Payment status</dt>
+                                <dd>{latestPaymentInstruction.status_display}</dd>
+                              </div>
+                              <div>
+                                <dt>Amount</dt>
+                                <dd>
+                                  {formatMoney(
+                                    latestPaymentInstruction.amount,
+                                    latestPaymentInstruction.currency.code,
+                                  )}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Provider reference</dt>
+                                <dd>{latestPaymentInstruction.provider_reference}</dd>
+                              </div>
+                            </dl>
+
+                            <form className="stack" onSubmit={handlePaymentAction}>
+                              <label>
+                                Payment action
+                                <select
+                                  value={paymentAction}
+                                  onChange={(event) =>
+                                    setPaymentAction(event.target.value)
+                                  }
+                                >
+                                  <option value="refund">Refund paid payment</option>
+                                  <option value="reversal">
+                                    Reverse authorization
+                                  </option>
+                                </select>
+                              </label>
+
+                              <label>
+                                Reason code
+                                <input
+                                  value={paymentActionReason}
+                                  onChange={(event) =>
+                                    setPaymentActionReason(event.target.value)
+                                  }
+                                  placeholder="customer_request, duplicate, risk_hold"
+                                />
+                              </label>
+
+                              <label>
+                                Payment note
+                                <textarea
+                                  value={paymentActionNote}
+                                  onChange={(event) =>
+                                    setPaymentActionNote(event.target.value)
+                                  }
+                                  maxLength={1000}
+                                  rows={4}
+                                  placeholder="Record why this refund or reversal is being made"
+                                />
+                              </label>
+
+                              <button
+                                type="submit"
+                                disabled={
+                                  applyingPaymentAction ||
+                                  !paymentActionNote.trim()
+                                }
+                              >
+                                {applyingPaymentAction
+                                  ? "Processing..."
+                                  : "Process payment action"}
+                              </button>
+                            </form>
+
+                            {selectedTransfer.payment_actions.length ? (
+                              <ol className="event-list">
+                                {selectedTransfer.payment_actions.map((action) => (
+                                  <li key={action.id}>
+                                    <strong>{action.action_display}</strong>
+                                    <span>{formatDate(action.created_at)}</span>
+                                    <p>
+                                      {action.status_display} -{" "}
+                                      {formatMoney(
+                                        action.amount,
+                                        action.currency.code,
+                                      )}
+                                    </p>
+                                    {action.provider_action_reference ? (
+                                      <p>{action.provider_action_reference}</p>
+                                    ) : null}
+                                    {action.note ? <p>{action.note}</p> : null}
+                                  </li>
+                                ))}
+                              </ol>
+                            ) : (
+                              <p className="muted small">
+                                No payment actions have been recorded yet.
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          <p className="muted small">
+                            No payment instruction has been prepared yet.
+                          </p>
+                        )}
+                      </section>
+
+                      <section className="stack">
+                        <h3>Payout</h3>
+                        <dl className="summary-list">
+                          <div>
+                            <dt>Provider</dt>
+                            <dd>
+                              {selectedTransfer.payout_provider_details?.name ??
+                                "Not selected"}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Method</dt>
+                            <dd>{selectedTransfer.payout_method.replace("_", " ")}</dd>
+                          </div>
+                          <div>
+                            <dt>Amount</dt>
+                            <dd>
+                              {formatMoney(
+                                selectedTransfer.receive_amount,
+                                selectedTransfer.destination_currency_details?.code,
+                              )}
+                            </dd>
+                          </div>
+                          {latestPayoutAttempt ? (
+                            <>
+                              <div>
+                                <dt>Latest attempt</dt>
+                                <dd>{latestPayoutAttempt.status_display}</dd>
+                              </div>
+                              <div>
+                                <dt>Payout reference</dt>
+                                <dd>{latestPayoutAttempt.provider_reference}</dd>
+                              </div>
+                            </>
+                          ) : null}
+                        </dl>
+
+                        <form className="stack" onSubmit={handleSubmitPayout}>
+                          <label>
+                            Submission note
+                            <textarea
+                              value={payoutSubmitNote}
+                              onChange={(event) =>
+                                setPayoutSubmitNote(event.target.value)
+                              }
+                              maxLength={500}
+                              rows={3}
+                              placeholder="Add provider or operations context"
+                            />
+                          </label>
+
+                          <button type="submit" disabled={submittingPayout}>
+                            {submittingPayout ? "Submitting..." : "Submit payout"}
+                          </button>
+                        </form>
+
+                        {latestPayoutAttempt ? (
+                          <>
+                            <form className="stack" onSubmit={handlePayoutSync}>
+                              <label>
+                                Provider status
+                                <select
+                                  value={payoutSyncStatus}
+                                  onChange={(event) =>
+                                    setPayoutSyncStatus(event.target.value)
+                                  }
+                                >
+                                  {PAYOUT_SYNC_STATUSES.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+
+                              <label>
+                                Provider event id
+                                <input
+                                  value={payoutProviderEventId}
+                                  onChange={(event) =>
+                                    setPayoutProviderEventId(event.target.value)
+                                  }
+                                  placeholder="Optional idempotency key"
+                                />
+                              </label>
+
+                              <label>
+                                Provider raw status
+                                <input
+                                  value={payoutProviderStatus}
+                                  onChange={(event) =>
+                                    setPayoutProviderStatus(event.target.value)
+                                  }
+                                  placeholder="paid, failed, reversed"
+                                />
+                              </label>
+
+                              <label>
+                                Status note
+                                <textarea
+                                  value={payoutStatusReason}
+                                  onChange={(event) =>
+                                    setPayoutStatusReason(event.target.value)
+                                  }
+                                  maxLength={1000}
+                                  rows={3}
+                                  placeholder="Add provider response or exception reason"
+                                />
+                              </label>
+
+                              <button type="submit" disabled={syncingPayout}>
+                                {syncingPayout ? "Syncing..." : "Sync payout status"}
+                              </button>
+                            </form>
+
+                            {["failed", "reversed"].includes(
+                              latestPayoutAttempt.status,
+                            ) ? (
+                              <form className="stack" onSubmit={handlePayoutRetry}>
+                                <label>
+                                  Retry note
+                                  <textarea
+                                    value={payoutActionNote}
+                                    onChange={(event) =>
+                                      setPayoutActionNote(event.target.value)
+                                    }
+                                    maxLength={1000}
+                                    rows={3}
+                                    placeholder="Record why this payout is being retried"
+                                  />
+                                </label>
+                                <button
+                                  type="submit"
+                                  disabled={retryingPayout || !payoutActionNote.trim()}
+                                >
+                                  {retryingPayout ? "Retrying..." : "Retry payout"}
+                                </button>
+                              </form>
+                            ) : null}
+
+                            {latestPayoutAttempt.status === "paid_out" ? (
+                              <form className="stack" onSubmit={handlePayoutReverse}>
+                                <label>
+                                  Reversal note
+                                  <textarea
+                                    value={payoutActionNote}
+                                    onChange={(event) =>
+                                      setPayoutActionNote(event.target.value)
+                                    }
+                                    maxLength={1000}
+                                    rows={3}
+                                    placeholder="Record why this payout is being reversed"
+                                  />
+                                </label>
+                                <button
+                                  type="submit"
+                                  disabled={reversingPayout || !payoutActionNote.trim()}
+                                >
+                                  {reversingPayout
+                                    ? "Reversing..."
+                                    : "Reverse payout"}
+                                </button>
+                              </form>
+                            ) : null}
+
+                            {selectedTransfer.payout_attempts.length ? (
+                              <ol className="event-list">
+                                {selectedTransfer.payout_attempts.map((attempt) => (
+                                  <li key={attempt.id}>
+                                    <strong>
+                                      Attempt {attempt.attempt_number} -{" "}
+                                      {attempt.status_display}
+                                    </strong>
+                                    <span>{formatDate(attempt.created_at)}</span>
+                                    <p>
+                                      {attempt.provider.name} -{" "}
+                                      {formatMoney(
+                                        attempt.amount,
+                                        attempt.currency.code,
+                                      )}
+                                    </p>
+                                    {attempt.status_reason ? (
+                                      <p>{attempt.status_reason}</p>
+                                    ) : null}
+                                  </li>
+                                ))}
+                              </ol>
+                            ) : null}
+
+                            {selectedTransfer.payout_events.length ? (
+                              <ol className="event-list">
+                                {selectedTransfer.payout_events.map((event) => (
+                                  <li key={event.id}>
+                                    <strong>{event.action_display}</strong>
+                                    <span>{formatDate(event.created_at)}</span>
+                                    <p>
+                                      {event.from_payout_status
+                                        ? `${event.from_payout_status} to `
+                                        : ""}
+                                      {event.to_payout_status || "No status change"}
+                                    </p>
+                                    {event.note ? <p>{event.note}</p> : null}
+                                  </li>
+                                ))}
+                              </ol>
+                            ) : null}
+                          </>
+                        ) : (
+                          <p className="muted small">
+                            No payout attempt has been submitted yet.
+                          </p>
+                        )}
+                      </section>
 
                       <section className="stack">
                         <h3>Compliance flags</h3>

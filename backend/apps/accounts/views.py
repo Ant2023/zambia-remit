@@ -89,9 +89,9 @@ class PasswordResetRequestView(APIView):
                 f"?uid={uid}&token={token}"
             )
             send_mail(
-                "Reset your Zambia Remit password",
+                "Reset your MbongoPay password",
                 (
-                    "Use this secure link to reset your Zambia Remit password:\n\n"
+                    "Use this secure link to reset your MbongoPay password:\n\n"
                     f"{reset_url}\n\n"
                     "If you did not request this, you can ignore this email."
                 ),

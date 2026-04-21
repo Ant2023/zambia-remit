@@ -6,8 +6,12 @@ from .models import (
     TransferComplianceEvent,
     TransferComplianceFlag,
     TransferLimitRule,
+    TransferPaymentAction,
+    TransferPaymentFraudRule,
     TransferPaymentInstruction,
     TransferPaymentWebhookEvent,
+    TransferPayoutAttempt,
+    TransferPayoutEvent,
     TransferSanctionsCheck,
     RecipientVerificationRule,
     TransferRiskRule,
@@ -29,6 +33,59 @@ class TransferPaymentInstructionInline(admin.TabularInline):
         "instructions",
         "created_at",
         "updated_at",
+    )
+
+
+class TransferPaymentActionInline(admin.TabularInline):
+    model = TransferPaymentAction
+    extra = 0
+    readonly_fields = ("created_at", "updated_at", "processed_at")
+    fields = (
+        "action",
+        "status",
+        "amount",
+        "currency",
+        "provider_action_reference",
+        "reason_code",
+        "requested_by",
+        "processed_at",
+    )
+
+
+class TransferPayoutAttemptInline(admin.TabularInline):
+    model = TransferPayoutAttempt
+    extra = 0
+    readonly_fields = (
+        "provider_reference",
+        "destination_snapshot",
+        "request_payload",
+        "response_payload",
+        "created_at",
+        "updated_at",
+    )
+    fields = (
+        "attempt_number",
+        "provider",
+        "status",
+        "provider_status",
+        "amount",
+        "currency",
+        "provider_reference",
+        "created_by",
+    )
+
+
+class TransferPayoutEventInline(admin.TabularInline):
+    model = TransferPayoutEvent
+    extra = 0
+    readonly_fields = ("created_at", "updated_at")
+    fields = (
+        "action",
+        "from_payout_status",
+        "to_payout_status",
+        "provider_event_id",
+        "performed_by",
+        "note",
     )
 
 
@@ -89,10 +146,17 @@ class TransferAdmin(admin.ModelAdmin):
         "source_currency",
         "receive_amount",
         "destination_currency",
+        "payout_provider",
         "status",
         "updated_at",
     )
-    list_filter = ("status", "funding_status", "compliance_status", "payout_status")
+    list_filter = (
+        "status",
+        "funding_status",
+        "compliance_status",
+        "payout_status",
+        "payout_provider",
+    )
     search_fields = (
         "reference",
         "sender__email",
@@ -105,6 +169,9 @@ class TransferAdmin(admin.ModelAdmin):
         TransferComplianceEventInline,
         TransferSanctionsCheckInline,
         TransferPaymentInstructionInline,
+        TransferPaymentActionInline,
+        TransferPayoutAttemptInline,
+        TransferPayoutEventInline,
         TransferStatusEventInline,
     ]
 
@@ -247,6 +314,31 @@ class TransferRiskRuleAdmin(admin.ModelAdmin):
     readonly_fields = ("created_at", "updated_at")
 
 
+@admin.register(TransferPaymentFraudRule)
+class TransferPaymentFraudRuleAdmin(admin.ModelAdmin):
+    list_display = (
+        "code",
+        "name",
+        "rule_type",
+        "payment_method",
+        "action",
+        "severity",
+        "is_active",
+    )
+    list_filter = (
+        "is_active",
+        "rule_type",
+        "payment_method",
+        "action",
+        "severity",
+        "payout_method",
+        "source_currency",
+        "destination_country",
+    )
+    search_fields = ("code", "name", "description", "sender__email")
+    readonly_fields = ("created_at", "updated_at")
+
+
 @admin.register(TransferPaymentInstruction)
 class TransferPaymentInstructionAdmin(admin.ModelAdmin):
     list_display = (
@@ -259,6 +351,29 @@ class TransferPaymentInstructionAdmin(admin.ModelAdmin):
         "updated_at",
     )
     list_filter = ("payment_method", "provider_name", "status")
+
+
+@admin.register(TransferPaymentAction)
+class TransferPaymentActionAdmin(admin.ModelAdmin):
+    list_display = (
+        "transfer",
+        "action",
+        "status",
+        "amount",
+        "currency",
+        "provider_name",
+        "requested_by",
+        "processed_at",
+    )
+    list_filter = ("action", "status", "provider_name", "currency")
+    search_fields = (
+        "transfer__reference",
+        "provider_reference",
+        "provider_action_reference",
+        "reason_code",
+        "note",
+    )
+    readonly_fields = ("created_at", "updated_at", "processed_at")
 
 
 @admin.register(TransferPaymentWebhookEvent)
@@ -274,8 +389,54 @@ class TransferPaymentWebhookEventAdmin(admin.ModelAdmin):
     list_filter = ("provider_name", "processing_status", "resulting_payment_status")
     search_fields = ("provider_event_id", "provider_reference", "processing_message")
     readonly_fields = ("created_at", "updated_at", "processed_at")
-    search_fields = ("transfer__reference", "provider_reference")
-    readonly_fields = ("provider_reference", "created_at", "updated_at")
+
+
+@admin.register(TransferPayoutAttempt)
+class TransferPayoutAttemptAdmin(admin.ModelAdmin):
+    list_display = (
+        "transfer",
+        "attempt_number",
+        "provider",
+        "amount",
+        "currency",
+        "status",
+        "provider_status",
+        "updated_at",
+    )
+    list_filter = ("status", "provider", "payout_method", "currency")
+    search_fields = (
+        "transfer__reference",
+        "provider_reference",
+        "status_reason",
+    )
+    readonly_fields = (
+        "provider_reference",
+        "destination_snapshot",
+        "request_payload",
+        "response_payload",
+        "created_at",
+        "updated_at",
+    )
+
+
+@admin.register(TransferPayoutEvent)
+class TransferPayoutEventAdmin(admin.ModelAdmin):
+    list_display = (
+        "transfer",
+        "payout_attempt",
+        "action",
+        "to_payout_status",
+        "provider_event_id",
+        "performed_by",
+        "created_at",
+    )
+    list_filter = ("action", "to_payout_status")
+    search_fields = (
+        "transfer__reference",
+        "provider_event_id",
+        "note",
+    )
+    readonly_fields = ("created_at", "updated_at")
 
 
 @admin.register(TransferStatusEvent)

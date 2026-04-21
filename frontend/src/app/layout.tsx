@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Zambia Remit",
-  description: "Send and track money transfers to Zambia.",
+  title: "MbongoPay",
+  description: "Send and track cross-border money transfers.",
 };
 
 export default function RootLayout({

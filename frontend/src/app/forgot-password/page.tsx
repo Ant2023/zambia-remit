@@ -35,7 +35,7 @@ export default function ForgotPasswordPage() {
       <main className="auth-page">
         <section className="auth-shell">
           <div className="auth-card auth-card-wide">
-            <div className="auth-icon">FX</div>
+            <div className="auth-icon">MP</div>
             <p className="auth-eyebrow">Account recovery</p>
             <h1>Reset your password</h1>
             <p className="auth-copy">

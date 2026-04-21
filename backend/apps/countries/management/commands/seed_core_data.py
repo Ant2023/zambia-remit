@@ -4,7 +4,14 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 
-from apps.countries.models import Country, CountryCorridor, Currency
+from apps.countries.models import (
+    CorridorPayoutMethod,
+    CorridorPayoutProvider,
+    Country,
+    CountryCorridor,
+    Currency,
+    PayoutProvider,
+)
 from apps.quotes.models import ExchangeRate, FeeRule
 from common.choices import PayoutMethod
 
@@ -89,6 +96,17 @@ class Command(BaseCommand):
         },
     }
 
+    PAYOUT_PROVIDER_DEFAULTS = {
+        PayoutMethod.MOBILE_MONEY: {
+            "code": "internal_mobile_money",
+            "name": "Internal mobile money operations",
+        },
+        PayoutMethod.BANK_DEPOSIT: {
+            "code": "internal_bank_deposit",
+            "name": "Internal bank deposit operations",
+        },
+    }
+
     @transaction.atomic
     def handle(self, *args, **options):
         currencies = self.seed_currencies()
@@ -96,6 +114,8 @@ class Command(BaseCommand):
         corridors = self.seed_corridors(countries)
         self.seed_exchange_rates(corridors)
         self.seed_fee_rules(corridors)
+        providers = self.seed_payout_providers()
+        self.seed_corridor_payout_routes(corridors, providers)
 
         self.stdout.write(self.style.SUCCESS("Core remittance seed data is ready."))
 
@@ -200,3 +220,51 @@ class Command(BaseCommand):
                     },
                 )
                 self.stdout.write(f"Seeded fee rule: {fee_rule}")
+
+    def seed_payout_providers(self) -> dict[str, PayoutProvider]:
+        providers = {}
+
+        for payout_method, item in self.PAYOUT_PROVIDER_DEFAULTS.items():
+            provider, _ = PayoutProvider.objects.update_or_create(
+                code=item["code"],
+                defaults={
+                    "name": item["name"],
+                    "payout_method": payout_method,
+                    "is_active": True,
+                },
+            )
+            providers[payout_method] = provider
+            self.stdout.write(f"Seeded payout provider: {provider}")
+
+        return providers
+
+    def seed_corridor_payout_routes(
+        self,
+        corridors: dict[tuple[str, str], tuple[CountryCorridor, Decimal]],
+        providers: dict[str, PayoutProvider],
+    ) -> None:
+        for corridor, _exchange_rate in corridors.values():
+            for payout_method, provider in providers.items():
+                route, _ = CorridorPayoutMethod.objects.update_or_create(
+                    corridor=corridor,
+                    payout_method=payout_method,
+                    defaults={
+                        "is_active": True,
+                        "min_send_amount": None,
+                        "max_send_amount": None,
+                        "display_order": 10
+                        if payout_method == PayoutMethod.MOBILE_MONEY
+                        else 20,
+                    },
+                )
+                provider_route, _ = CorridorPayoutProvider.objects.update_or_create(
+                    corridor_payout_method=route,
+                    provider=provider,
+                    defaults={
+                        "is_active": True,
+                        "priority": 10,
+                        "min_send_amount": None,
+                        "max_send_amount": None,
+                    },
+                )
+                self.stdout.write(f"Seeded payout route: {provider_route}")

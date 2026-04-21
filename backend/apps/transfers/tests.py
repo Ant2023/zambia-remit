@@ -7,7 +7,14 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.countries.models import Country, CountryCorridor, Currency
+from apps.countries.models import (
+    CorridorPayoutMethod,
+    CorridorPayoutProvider,
+    Country,
+    CountryCorridor,
+    Currency,
+    PayoutProvider,
+)
 from apps.quotes.models import ExchangeRate, FeeRule, Quote
 from apps.quotes.services import calculate_fee_amount, get_rate_for_corridor
 from apps.recipients.models import Recipient, RecipientMobileMoneyAccount
@@ -20,8 +27,11 @@ from .models import (
     TransferComplianceEvent,
     TransferComplianceFlag,
     TransferLimitRule,
+    TransferPaymentAction,
+    TransferPaymentFraudRule,
     TransferPaymentInstruction,
     TransferPaymentWebhookEvent,
+    TransferPayoutAttempt,
     TransferRiskRule,
     TransferSanctionsCheck,
 )
@@ -70,6 +80,23 @@ class CoreTransferProductTests(APITestCase):
             max_amount=Decimal("5000.00"),
             fixed_fee=Decimal("2.99"),
             percentage_fee=Decimal("1.50"),
+        )
+        self.payout_provider, _ = PayoutProvider.objects.update_or_create(
+            code="internal_mobile_money",
+            defaults={
+                "name": "Internal mobile money operations",
+                "payout_method": PayoutMethod.MOBILE_MONEY,
+                "is_active": True,
+            },
+        )
+        self.payout_method_route = CorridorPayoutMethod.objects.create(
+            corridor=self.corridor,
+            payout_method=PayoutMethod.MOBILE_MONEY,
+        )
+        CorridorPayoutProvider.objects.create(
+            corridor_payout_method=self.payout_method_route,
+            provider=self.payout_provider,
+            priority=10,
         )
         self.sender = User.objects.create_user(
             email="sender@example.com",
@@ -135,6 +162,7 @@ class CoreTransferProductTests(APITestCase):
             source_currency=self.usd,
             destination_currency=self.zmw,
             payout_method=PayoutMethod.MOBILE_MONEY,
+            payout_provider=self.payout_provider,
             send_amount=quote.send_amount,
             fee_amount=quote.fee_amount,
             exchange_rate=quote.exchange_rate,
@@ -382,6 +410,186 @@ class CoreTransferProductTests(APITestCase):
             str(funding_response.data),
         )
 
+    def test_cardholder_name_mismatch_fraud_rule_holds_payment(self):
+        TransferPaymentFraudRule.objects.create(
+            name="Cardholder name mismatch",
+            code="PAYMENT_NAME_MISMATCH",
+            rule_type=TransferPaymentFraudRule.RuleType.CARDHOLDER_NAME_MISMATCH,
+            payment_method=TransferPaymentInstruction.PaymentMethod.DEBIT_CARD,
+            action=TransferPaymentFraudRule.Action.HOLD,
+            severity=TransferComplianceFlag.Severity.HIGH,
+        )
+        transfer = self.create_transfer()
+        self.client.force_authenticate(self.sender)
+        instruction_response = self.client.post(
+            reverse("transfer-payment-instructions", kwargs={"pk": transfer.pk}),
+            {"payment_method": TransferPaymentInstruction.PaymentMethod.DEBIT_CARD},
+            format="json",
+        )
+
+        response = self.client.post(
+            reverse(
+                "transfer-payment-instruction-authorize",
+                kwargs={
+                    "pk": transfer.pk,
+                    "instruction_id": instruction_response.data["id"],
+                },
+            ),
+            {
+                "cardholder_name": "Jordan Cardholder",
+                "card_number": "4242 4242 4242 4242",
+                "expiry_month": 12,
+                "expiry_year": 2030,
+                "cvv": "123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        instruction = TransferPaymentInstruction.objects.get(id=response.data["id"])
+        transfer.refresh_from_db()
+        self.assertEqual(
+            instruction.status,
+            TransferPaymentInstruction.Status.REQUIRES_REVIEW,
+        )
+        self.assertEqual(transfer.compliance_status, Transfer.ComplianceStatus.ON_HOLD)
+        flag = transfer.compliance_flags.get(code="PAYMENT_NAME_MISMATCH")
+        self.assertEqual(flag.category, TransferComplianceFlag.Category.PAYMENT)
+        self.assertEqual(flag.metadata["cardholder_name"], "Jordan Cardholder")
+
+    def test_unusual_payment_amount_fraud_rule_flags_authorized_payment(self):
+        TransferPaymentFraudRule.objects.create(
+            name="Unusual payment amount",
+            code="PAYMENT_UNUSUAL_AMOUNT",
+            rule_type=TransferPaymentFraudRule.RuleType.UNUSUAL_AMOUNT,
+            payment_method=TransferPaymentInstruction.PaymentMethod.DEBIT_CARD,
+            threshold_amount=Decimal("100.00"),
+            action=TransferPaymentFraudRule.Action.FLAG,
+            severity=TransferComplianceFlag.Severity.MEDIUM,
+        )
+        transfer = self.create_transfer()
+        self.client.force_authenticate(self.sender)
+        instruction_response = self.client.post(
+            reverse("transfer-payment-instructions", kwargs={"pk": transfer.pk}),
+            {"payment_method": TransferPaymentInstruction.PaymentMethod.DEBIT_CARD},
+            format="json",
+        )
+
+        response = self.client.post(
+            reverse(
+                "transfer-payment-instruction-authorize",
+                kwargs={
+                    "pk": transfer.pk,
+                    "instruction_id": instruction_response.data["id"],
+                },
+            ),
+            {
+                "cardholder_name": "Sam Sender",
+                "card_number": "4242 4242 4242 4242",
+                "expiry_month": 12,
+                "expiry_year": 2030,
+                "cvv": "123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        instruction = TransferPaymentInstruction.objects.get(id=response.data["id"])
+        transfer.refresh_from_db()
+        self.assertEqual(
+            instruction.status,
+            TransferPaymentInstruction.Status.AUTHORIZED,
+        )
+        self.assertEqual(transfer.compliance_status, Transfer.ComplianceStatus.FLAGGED)
+        flag = transfer.compliance_flags.get(code="PAYMENT_UNUSUAL_AMOUNT")
+        self.assertEqual(flag.category, TransferComplianceFlag.Category.PAYMENT)
+        self.assertEqual(flag.metadata["payment_amount"], "104.49")
+
+    def test_repeated_failed_payment_attempts_can_hold_transfer(self):
+        TransferPaymentFraudRule.objects.create(
+            name="Repeated failed card attempts",
+            code="PAYMENT_REPEATED_FAILURES",
+            rule_type=TransferPaymentFraudRule.RuleType.REPEATED_ATTEMPTS,
+            payment_method=TransferPaymentInstruction.PaymentMethod.DEBIT_CARD,
+            attempt_count=2,
+            window_minutes=60,
+            action=TransferPaymentFraudRule.Action.HOLD,
+            severity=TransferComplianceFlag.Severity.HIGH,
+        )
+        transfer = self.create_transfer()
+        self.client.force_authenticate(self.sender)
+
+        for index in range(2):
+            instruction_response = self.client.post(
+                reverse("transfer-payment-instructions", kwargs={"pk": transfer.pk}),
+                {"payment_method": TransferPaymentInstruction.PaymentMethod.DEBIT_CARD},
+                format="json",
+            )
+            self.client.post(
+                reverse(
+                    "transfer-payment-instruction-authorize",
+                    kwargs={
+                        "pk": transfer.pk,
+                        "instruction_id": instruction_response.data["id"],
+                    },
+                ),
+                {
+                    "cardholder_name": "Sam Sender",
+                    "card_number": "4000 0000 0000 0002",
+                    "expiry_month": 12,
+                    "expiry_year": 2030,
+                    "cvv": "123",
+                },
+                format="json",
+            )
+
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.compliance_status, Transfer.ComplianceStatus.ON_HOLD)
+        flag = transfer.compliance_flags.get(code="PAYMENT_REPEATED_FAILURES")
+        self.assertEqual(flag.category, TransferComplianceFlag.Category.PAYMENT)
+        self.assertEqual(flag.metadata["attempt_count"], "2")
+
+    def test_payment_fraud_hold_blocks_funding_confirmation(self):
+        TransferPaymentFraudRule.objects.create(
+            name="Compliance-held payment block",
+            code="PAYMENT_COMPLIANCE_HOLD",
+            rule_type=TransferPaymentFraudRule.RuleType.COMPLIANCE_HOLD,
+            payment_method=TransferPaymentInstruction.PaymentMethod.BANK_TRANSFER,
+            action=TransferPaymentFraudRule.Action.HOLD,
+            severity=TransferComplianceFlag.Severity.HIGH,
+        )
+        transfer = self.create_transfer()
+        transfer.compliance_status = Transfer.ComplianceStatus.ON_HOLD
+        transfer.save(update_fields=("compliance_status", "updated_at"))
+        self.client.force_authenticate(self.sender)
+        instruction_response = self.client.post(
+            reverse("transfer-payment-instructions", kwargs={"pk": transfer.pk}),
+            {"payment_method": TransferPaymentInstruction.PaymentMethod.BANK_TRANSFER},
+            format="json",
+        )
+
+        response = self.client.post(
+            reverse("transfer-funding", kwargs={"pk": transfer.pk}),
+            {
+                "payment_method": TransferPaymentInstruction.PaymentMethod.BANK_TRANSFER,
+                "payment_instruction_id": instruction_response.data["id"],
+                "note": "Attempted while compliance hold is open.",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Payment requires fraud review", str(response.data))
+        instruction = TransferPaymentInstruction.objects.get(
+            id=instruction_response.data["id"],
+        )
+        self.assertEqual(
+            instruction.status,
+            TransferPaymentInstruction.Status.REQUIRES_REVIEW,
+        )
+        flag = transfer.compliance_flags.get(code="PAYMENT_COMPLIANCE_HOLD")
+        self.assertEqual(flag.category, TransferComplianceFlag.Category.PAYMENT)
+
     def test_payment_webhook_paid_event_marks_instruction_paid_and_logs_event(self):
         transfer = self.create_transfer()
         self.client.force_authenticate(self.sender)
@@ -556,6 +764,130 @@ class CoreTransferProductTests(APITestCase):
         self.assertEqual(transfer.status, Transfer.Status.REFUNDED)
         self.assertEqual(transfer.funding_status, Transfer.FundingStatus.REFUNDED)
 
+    def test_staff_can_refund_paid_payment_instruction(self):
+        transfer = self.create_transfer()
+        instruction = TransferPaymentInstruction.objects.create(
+            transfer=transfer,
+            payment_method=TransferPaymentInstruction.PaymentMethod.DEBIT_CARD,
+            provider_name="mock_card_processor",
+            amount=Decimal("104.49"),
+            currency=self.usd,
+        )
+        apply_payment_instruction_status(
+            instruction,
+            TransferPaymentInstruction.Status.PAID,
+            changed_by=self.sender,
+            note="Payment captured.",
+        )
+        self.client.force_authenticate(self.staff)
+
+        response = self.client.post(
+            reverse("transfer-payment-action", kwargs={"pk": transfer.pk}),
+            {
+                "action": TransferPaymentAction.Action.REFUND,
+                "payment_instruction_id": str(instruction.id),
+                "reason_code": "customer_request",
+                "note": "Customer requested refund before payout.",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        instruction.refresh_from_db()
+        transfer.refresh_from_db()
+        self.assertEqual(instruction.status, TransferPaymentInstruction.Status.REFUNDED)
+        self.assertEqual(transfer.status, Transfer.Status.REFUNDED)
+        action = TransferPaymentAction.objects.get(payment_instruction=instruction)
+        self.assertEqual(action.status, TransferPaymentAction.Status.COMPLETED)
+        self.assertEqual(action.provider_action_reference[:4], "RFD-")
+        self.assertEqual(action.requested_by, self.staff)
+
+    def test_staff_can_reverse_authorized_payment_instruction(self):
+        transfer = self.create_transfer()
+        instruction = TransferPaymentInstruction.objects.create(
+            transfer=transfer,
+            payment_method=TransferPaymentInstruction.PaymentMethod.DEBIT_CARD,
+            provider_name="mock_card_processor",
+            amount=Decimal("104.49"),
+            currency=self.usd,
+        )
+        apply_payment_instruction_status(
+            instruction,
+            TransferPaymentInstruction.Status.AUTHORIZED,
+            changed_by=self.sender,
+            note="Payment authorized.",
+        )
+        self.client.force_authenticate(self.staff)
+
+        response = self.client.post(
+            reverse("transfer-payment-action", kwargs={"pk": transfer.pk}),
+            {
+                "action": TransferPaymentAction.Action.REVERSAL,
+                "payment_instruction_id": str(instruction.id),
+                "reason_code": "risk_hold",
+                "note": "Authorization reversed after risk review.",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        instruction.refresh_from_db()
+        transfer.refresh_from_db()
+        self.assertEqual(instruction.status, TransferPaymentInstruction.Status.REVERSED)
+        self.assertEqual(transfer.status, Transfer.Status.REFUNDED)
+        action = TransferPaymentAction.objects.get(payment_instruction=instruction)
+        self.assertEqual(action.status, TransferPaymentAction.Status.COMPLETED)
+        self.assertEqual(action.provider_action_reference[:4], "REV-")
+
+    def test_payment_action_rejects_invalid_refund_state(self):
+        transfer = self.create_transfer()
+        instruction = TransferPaymentInstruction.objects.create(
+            transfer=transfer,
+            payment_method=TransferPaymentInstruction.PaymentMethod.DEBIT_CARD,
+            provider_name="mock_card_processor",
+            amount=Decimal("104.49"),
+            currency=self.usd,
+            status=TransferPaymentInstruction.Status.AUTHORIZED,
+        )
+        self.client.force_authenticate(self.staff)
+
+        response = self.client.post(
+            reverse("transfer-payment-action", kwargs={"pk": transfer.pk}),
+            {
+                "action": TransferPaymentAction.Action.REFUND,
+                "payment_instruction_id": str(instruction.id),
+                "note": "Trying invalid refund.",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Only paid payment instructions can be refunded", str(response.data))
+
+    def test_payment_action_requires_staff(self):
+        transfer = self.create_transfer()
+        instruction = TransferPaymentInstruction.objects.create(
+            transfer=transfer,
+            payment_method=TransferPaymentInstruction.PaymentMethod.DEBIT_CARD,
+            provider_name="mock_card_processor",
+            amount=Decimal("104.49"),
+            currency=self.usd,
+            status=TransferPaymentInstruction.Status.PAID,
+        )
+        self.client.force_authenticate(self.sender)
+
+        response = self.client.post(
+            reverse("transfer-payment-action", kwargs={"pk": transfer.pk}),
+            {
+                "action": TransferPaymentAction.Action.REFUND,
+                "payment_instruction_id": str(instruction.id),
+                "note": "Customer cannot self-refund.",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
     def test_authorized_payment_keeps_transfer_awaiting_funding(self):
         transfer = self.create_transfer()
         instruction = TransferPaymentInstruction.objects.create(
@@ -632,11 +964,158 @@ class CoreTransferProductTests(APITestCase):
             self.assertEqual(transfer.status, target_status)
 
         self.assertEqual(transfer.compliance_status, Transfer.ComplianceStatus.APPROVED)
-        self.assertEqual(transfer.payout_status, Transfer.PayoutStatus.PAID)
+        self.assertEqual(transfer.payout_status, Transfer.PayoutStatus.PAID_OUT)
+        payout_attempt = transfer.payout_attempts.get()
+        self.assertEqual(payout_attempt.provider, self.payout_provider)
+        self.assertEqual(payout_attempt.status, TransferPayoutAttempt.Status.PAID_OUT)
         self.assertEqual(
             transfer.status_events.filter(to_status=Transfer.Status.COMPLETED).count(),
             1,
         )
+
+    def test_payout_failure_can_be_retried_with_new_attempt(self):
+        transfer = self.create_transfer(status_value=Transfer.Status.FUNDING_RECEIVED)
+        self.client.force_authenticate(self.staff)
+        for target_status in (
+            Transfer.Status.UNDER_REVIEW,
+            Transfer.Status.APPROVED,
+            Transfer.Status.PROCESSING_PAYOUT,
+        ):
+            response = self.client.post(
+                reverse("transfer-status-transition", kwargs={"pk": transfer.pk}),
+                {"status": target_status, "note": f"Move to {target_status}."},
+                format="json",
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        transfer.refresh_from_db()
+        first_attempt = transfer.payout_attempts.get()
+        failure_response = self.client.post(
+            reverse(
+                "transfer-payout-attempt-sync",
+                kwargs={"pk": transfer.pk, "attempt_id": first_attempt.id},
+            ),
+            {
+                "payout_status": TransferPayoutAttempt.Status.FAILED,
+                "provider_event_id": "payout-failed-1",
+                "provider_status": "failed",
+                "status_reason": "Wallet provider rejected the payout.",
+            },
+            format="json",
+        )
+        self.assertEqual(failure_response.status_code, status.HTTP_200_OK)
+        transfer.refresh_from_db()
+        first_attempt.refresh_from_db()
+        self.assertEqual(transfer.status, Transfer.Status.FAILED)
+        self.assertEqual(transfer.payout_status, Transfer.PayoutStatus.FAILED)
+        self.assertEqual(first_attempt.status, TransferPayoutAttempt.Status.FAILED)
+
+        retry_response = self.client.post(
+            reverse(
+                "transfer-payout-attempt-retry",
+                kwargs={"pk": transfer.pk, "attempt_id": first_attempt.id},
+            ),
+            {"note": "Retry after wallet provider recovery."},
+            format="json",
+        )
+
+        self.assertEqual(retry_response.status_code, status.HTTP_200_OK)
+        transfer.refresh_from_db()
+        retry_attempt = transfer.payout_attempts.order_by("-attempt_number").first()
+        self.assertEqual(transfer.status, Transfer.Status.PROCESSING_PAYOUT)
+        self.assertEqual(transfer.payout_status, Transfer.PayoutStatus.SUBMITTED)
+        self.assertEqual(retry_attempt.retry_of, first_attempt)
+        self.assertEqual(retry_attempt.status, TransferPayoutAttempt.Status.SUBMITTED)
+
+    def test_payout_webhook_sync_is_idempotent(self):
+        transfer = self.create_transfer(status_value=Transfer.Status.FUNDING_RECEIVED)
+        self.client.force_authenticate(self.staff)
+        for target_status in (
+            Transfer.Status.UNDER_REVIEW,
+            Transfer.Status.APPROVED,
+            Transfer.Status.PROCESSING_PAYOUT,
+        ):
+            response = self.client.post(
+                reverse("transfer-status-transition", kwargs={"pk": transfer.pk}),
+                {"status": target_status, "note": f"Move to {target_status}."},
+                format="json",
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        transfer.refresh_from_db()
+        attempt = transfer.payout_attempts.get()
+        self.client.force_authenticate(user=None)
+
+        payload = {
+            "event_id": "payout-paid-1",
+            "provider_reference": attempt.provider_reference,
+            "payout_status": TransferPayoutAttempt.Status.PAID_OUT,
+            "provider_status": "paid_out",
+            "status_reason": "Provider confirmed payout.",
+        }
+        first_response = self.client.post(
+            reverse(
+                "transfer-payout-webhook",
+                kwargs={"provider_code": self.payout_provider.code},
+            ),
+            payload,
+            format="json",
+        )
+        duplicate_response = self.client.post(
+            reverse(
+                "transfer-payout-webhook",
+                kwargs={"provider_code": self.payout_provider.code},
+            ),
+            payload,
+            format="json",
+        )
+
+        self.assertEqual(first_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(duplicate_response.status_code, status.HTTP_200_OK)
+        self.assertFalse(first_response.data["duplicate"])
+        self.assertTrue(duplicate_response.data["duplicate"])
+        transfer.refresh_from_db()
+        attempt.refresh_from_db()
+        self.assertEqual(transfer.status, Transfer.Status.PAID_OUT)
+        self.assertEqual(transfer.payout_status, Transfer.PayoutStatus.PAID_OUT)
+        self.assertEqual(
+            attempt.events.filter(provider_event_id="payout-paid-1").count(),
+            1,
+        )
+
+    def test_paid_out_payout_can_be_reversed(self):
+        transfer = self.create_transfer(status_value=Transfer.Status.FUNDING_RECEIVED)
+        self.client.force_authenticate(self.staff)
+        for target_status in (
+            Transfer.Status.UNDER_REVIEW,
+            Transfer.Status.APPROVED,
+            Transfer.Status.PROCESSING_PAYOUT,
+            Transfer.Status.PAID_OUT,
+        ):
+            response = self.client.post(
+                reverse("transfer-status-transition", kwargs={"pk": transfer.pk}),
+                {"status": target_status, "note": f"Move to {target_status}."},
+                format="json",
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        transfer.refresh_from_db()
+        attempt = transfer.payout_attempts.get()
+        response = self.client.post(
+            reverse(
+                "transfer-payout-attempt-reverse",
+                kwargs={"pk": transfer.pk, "attempt_id": attempt.id},
+            ),
+            {"note": "Provider reversed the payout after settlement failure."},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        transfer.refresh_from_db()
+        attempt.refresh_from_db()
+        self.assertEqual(transfer.status, Transfer.Status.FAILED)
+        self.assertEqual(transfer.payout_status, Transfer.PayoutStatus.REVERSED)
+        self.assertEqual(attempt.status, TransferPayoutAttempt.Status.REVERSED)
 
     def test_status_transition_rejects_non_staff_and_invalid_moves(self):
         transfer = self.create_transfer(status_value=Transfer.Status.FUNDING_RECEIVED)
@@ -709,6 +1188,28 @@ class CoreTransferProductTests(APITestCase):
         self.assertEqual(
             response.data[0]["compliance_flags"][0]["code"],
             "HIGH_AMOUNT",
+        )
+
+    def test_transfer_creation_selects_payout_provider_from_corridor_route(self):
+        quote = self.create_quote(send_amount=Decimal("100.00"))
+        self.client.force_authenticate(self.sender)
+
+        response = self.client.post(
+            reverse("transfer-list-create"),
+            {
+                "quote_id": str(quote.id),
+                "recipient_id": str(self.recipient.id),
+                "reason_for_transfer": "Family support",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        transfer = Transfer.objects.get(id=response.data["id"])
+        self.assertEqual(transfer.payout_provider, self.payout_provider)
+        self.assertEqual(
+            response.data["payout_provider_details"]["code"],
+            "internal_mobile_money",
         )
 
     def test_transfer_limit_rule_can_hold_transfer_on_creation(self):

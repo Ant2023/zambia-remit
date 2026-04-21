@@ -38,9 +38,9 @@ export function AppNavbar() {
     <header className="premium-nav">
       <div className="premium-nav-inner">
         <Link className="premium-brand" href="/">
-          <span className="brand-mark">FX</span>
+          <span className="brand-mark">MP</span>
           <span>
-            <span className="brand-name">Zambia Remit</span>
+            <span className="brand-name">MbongoPay</span>
             <span className="brand-subtitle">Cross-border money transfers</span>
           </span>
         </Link>

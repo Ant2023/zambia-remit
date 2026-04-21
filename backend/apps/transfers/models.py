@@ -16,6 +16,10 @@ def generate_payment_reference() -> str:
     return f"PAY{uuid.uuid4().hex[:12].upper()}"
 
 
+def generate_payout_reference() -> str:
+    return f"PYO{uuid.uuid4().hex[:12].upper()}"
+
+
 class Transfer(BaseModel):
     class Status(models.TextChoices):
         DRAFT = "draft", "Draft"
@@ -53,9 +57,14 @@ class Transfer(BaseModel):
     class PayoutStatus(models.TextChoices):
         NOT_STARTED = "not_started", "Not started"
         PENDING = "pending", "Pending"
+        QUEUED = "queued", "Queued"
+        SUBMITTED = "submitted", "Submitted"
         PROCESSING = "processing", "Processing"
         PAID = "paid", "Paid"
+        PAID_OUT = "paid_out", "Paid out"
         FAILED = "failed", "Failed"
+        REVERSED = "reversed", "Reversed"
+        RETRYING = "retrying", "Retrying"
 
     reference = models.CharField(
         max_length=32,
@@ -99,6 +108,13 @@ class Transfer(BaseModel):
         related_name="destination_transfers",
     )
     payout_method = models.CharField(max_length=24, choices=PayoutMethod.choices)
+    payout_provider = models.ForeignKey(
+        "countries.PayoutProvider",
+        on_delete=models.PROTECT,
+        related_name="transfers",
+        null=True,
+        blank=True,
+    )
     send_amount = models.DecimalField(max_digits=12, decimal_places=2)
     fee_amount = models.DecimalField(max_digits=12, decimal_places=2)
     exchange_rate = models.DecimalField(max_digits=18, decimal_places=8)
@@ -133,6 +149,7 @@ class Transfer(BaseModel):
             models.Index(fields=("funding_status",)),
             models.Index(fields=("compliance_status",)),
             models.Index(fields=("payout_status",)),
+            models.Index(fields=("payout_provider", "payout_status")),
         ]
         constraints = [
             models.CheckConstraint(
@@ -162,6 +179,7 @@ class TransferComplianceFlag(BaseModel):
         KYC = "kyc", "KYC"
         LIMIT = "limit", "Limit"
         RISK_RULE = "risk_rule", "Risk rule"
+        PAYMENT = "payment", "Payment"
         SANCTIONS = "sanctions", "Sanctions"
         AML = "aml", "AML"
         RECIPIENT = "recipient", "Recipient"
@@ -699,6 +717,118 @@ class TransferRiskRule(BaseModel):
         return self.name
 
 
+class TransferPaymentFraudRule(BaseModel):
+    class RuleType(models.TextChoices):
+        REPEATED_ATTEMPTS = "repeated_attempts", "Repeated payment attempts"
+        CARDHOLDER_NAME_MISMATCH = (
+            "cardholder_name_mismatch",
+            "Cardholder name mismatch",
+        )
+        UNUSUAL_AMOUNT = "unusual_amount", "Unusual payment amount"
+        COMPLIANCE_HOLD = "compliance_hold", "Compliance hold"
+
+    class Action(models.TextChoices):
+        FLAG = "flag", "Flag"
+        HOLD = "hold", "Hold"
+
+    name = models.CharField(max_length=160)
+    code = models.CharField(max_length=80, unique=True)
+    is_active = models.BooleanField(default=True)
+    rule_type = models.CharField(max_length=40, choices=RuleType.choices)
+    sender = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="payment_fraud_rules",
+        null=True,
+        blank=True,
+    )
+    source_currency = models.ForeignKey(
+        "countries.Currency",
+        on_delete=models.PROTECT,
+        related_name="payment_fraud_rules",
+        null=True,
+        blank=True,
+    )
+    destination_country = models.ForeignKey(
+        "countries.Country",
+        on_delete=models.PROTECT,
+        related_name="payment_fraud_rules",
+        null=True,
+        blank=True,
+    )
+    payout_method = models.CharField(
+        max_length=24,
+        choices=PayoutMethod.choices,
+        blank=True,
+    )
+    payment_method = models.CharField(
+        max_length=32,
+        choices=(
+            ("debit_card", "Debit card"),
+            ("bank_transfer", "Bank transfer"),
+        ),
+        blank=True,
+    )
+    threshold_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Used by unusual amount rules.",
+    )
+    attempt_count = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Used by repeated attempt rules.",
+    )
+    window_minutes = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Used by repeated attempt rules.",
+    )
+    action = models.CharField(
+        max_length=16,
+        choices=Action.choices,
+        default=Action.FLAG,
+    )
+    severity = models.CharField(
+        max_length=16,
+        choices=TransferComplianceFlag.Severity.choices,
+        default=TransferComplianceFlag.Severity.MEDIUM,
+    )
+    description = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ("code",)
+        indexes = [
+            models.Index(fields=("is_active", "rule_type")),
+            models.Index(fields=("sender", "is_active")),
+            models.Index(fields=("source_currency", "is_active")),
+            models.Index(fields=("destination_country", "is_active")),
+            models.Index(fields=("payment_method", "is_active")),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(threshold_amount__isnull=True)
+                | models.Q(threshold_amount__gt=0),
+                name="payment_fraud_threshold_gt_0_or_null",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(attempt_count__isnull=True)
+                | models.Q(attempt_count__gt=0),
+                name="payment_fraud_attempt_count_gt_0_or_null",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(window_minutes__isnull=True)
+                | models.Q(window_minutes__gt=0),
+                name="payment_fraud_window_gt_0_or_null",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class TransferPaymentInstruction(BaseModel):
     class PaymentMethod(models.TextChoices):
         DEBIT_CARD = "debit_card", "Debit card"
@@ -835,6 +965,219 @@ class TransferPaymentWebhookEvent(BaseModel):
 
     def __str__(self) -> str:
         return f"{self.provider_name}:{self.provider_event_id}"
+
+
+class TransferPaymentAction(BaseModel):
+    class Action(models.TextChoices):
+        REFUND = "refund", "Refund"
+        REVERSAL = "reversal", "Reversal"
+
+    class Status(models.TextChoices):
+        REQUESTED = "requested", "Requested"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    transfer = models.ForeignKey(
+        Transfer,
+        on_delete=models.CASCADE,
+        related_name="payment_actions",
+    )
+    payment_instruction = models.ForeignKey(
+        TransferPaymentInstruction,
+        on_delete=models.PROTECT,
+        related_name="payment_actions",
+    )
+    action = models.CharField(max_length=24, choices=Action.choices)
+    status = models.CharField(
+        max_length=24,
+        choices=Status.choices,
+        default=Status.REQUESTED,
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.ForeignKey(
+        "countries.Currency",
+        on_delete=models.PROTECT,
+        related_name="payment_actions",
+    )
+    provider_name = models.CharField(max_length=120)
+    provider_reference = models.CharField(max_length=64)
+    provider_action_reference = models.CharField(max_length=120, blank=True)
+    reason_code = models.CharField(max_length=80, blank=True)
+    note = models.TextField()
+    failure_reason = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="payment_actions_requested",
+        null=True,
+        blank=True,
+    )
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=("transfer", "action", "status")),
+            models.Index(fields=("payment_instruction", "action", "status")),
+            models.Index(fields=("provider_name", "provider_reference")),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0),
+                name="payment_action_amount_gt_0",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.transfer.reference} {self.action}"
+
+
+class TransferPayoutAttempt(BaseModel):
+    class Status(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        SUBMITTED = "submitted", "Submitted"
+        PROCESSING = "processing", "Processing"
+        PAID_OUT = "paid_out", "Paid out"
+        FAILED = "failed", "Failed"
+        REVERSED = "reversed", "Reversed"
+        RETRYING = "retrying", "Retrying"
+
+    transfer = models.ForeignKey(
+        Transfer,
+        on_delete=models.CASCADE,
+        related_name="payout_attempts",
+    )
+    retry_of = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        related_name="retry_attempts",
+        null=True,
+        blank=True,
+    )
+    provider = models.ForeignKey(
+        "countries.PayoutProvider",
+        on_delete=models.PROTECT,
+        related_name="payout_attempts",
+    )
+    payout_method = models.CharField(max_length=24, choices=PayoutMethod.choices)
+    provider_reference = models.CharField(
+        max_length=64,
+        unique=True,
+        default=generate_payout_reference,
+        editable=False,
+    )
+    attempt_number = models.PositiveSmallIntegerField()
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.ForeignKey(
+        "countries.Currency",
+        on_delete=models.PROTECT,
+        related_name="payout_attempts",
+    )
+    status = models.CharField(
+        max_length=32,
+        choices=Status.choices,
+        default=Status.QUEUED,
+    )
+    provider_status = models.CharField(max_length=80, blank=True)
+    status_reason = models.TextField(blank=True)
+    destination_snapshot = models.JSONField(default=dict, blank=True)
+    request_payload = models.JSONField(default=dict, blank=True)
+    response_payload = models.JSONField(default=dict, blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="created_payout_attempts",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=("transfer", "status")),
+            models.Index(fields=("provider", "status")),
+            models.Index(fields=("provider", "provider_reference")),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("transfer", "attempt_number"),
+                name="unique_transfer_payout_attempt_number",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0),
+                name="payout_attempt_amount_gt_0",
+            ),
+        ]
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in {
+            self.Status.PAID_OUT,
+            self.Status.FAILED,
+            self.Status.REVERSED,
+        }
+
+    def __str__(self) -> str:
+        return f"{self.transfer.reference} payout attempt {self.attempt_number}"
+
+
+class TransferPayoutEvent(BaseModel):
+    class Action(models.TextChoices):
+        SUBMIT = "submit", "Submitted"
+        STATUS_SYNC = "status_sync", "Status sync"
+        FAIL = "fail", "Failed"
+        RETRY = "retry", "Retry"
+        REVERSE = "reverse", "Reversed"
+
+    transfer = models.ForeignKey(
+        Transfer,
+        on_delete=models.CASCADE,
+        related_name="payout_events",
+    )
+    payout_attempt = models.ForeignKey(
+        TransferPayoutAttempt,
+        on_delete=models.SET_NULL,
+        related_name="events",
+        null=True,
+        blank=True,
+    )
+    action = models.CharField(max_length=24, choices=Action.choices)
+    from_payout_status = models.CharField(max_length=32, blank=True)
+    to_payout_status = models.CharField(max_length=32, blank=True)
+    provider_event_id = models.CharField(max_length=120, blank=True)
+    note = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    performed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="transfer_payout_events",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=("transfer", "created_at")),
+            models.Index(fields=("payout_attempt", "created_at")),
+            models.Index(fields=("action", "created_at")),
+            models.Index(fields=("provider_event_id",)),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("payout_attempt", "provider_event_id"),
+                condition=~models.Q(provider_event_id=""),
+                name="unique_payout_attempt_provider_event",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.transfer.reference}: {self.action}"
 
 
 class TransferStatusEvent(BaseModel):

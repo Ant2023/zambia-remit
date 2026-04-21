@@ -59,6 +59,33 @@ export type Country = {
   is_destination_enabled: boolean;
 };
 
+export type PayoutProvider = {
+  id: string;
+  code: string;
+  name: string;
+  payout_method: "mobile_money" | "bank_deposit";
+  is_active: boolean;
+};
+
+export type CorridorPayoutProvider = {
+  id: string;
+  provider: PayoutProvider;
+  is_active: boolean;
+  priority: number;
+  min_send_amount: string | null;
+  max_send_amount: string | null;
+};
+
+export type CorridorPayoutMethod = {
+  id: string;
+  payout_method: "mobile_money" | "bank_deposit";
+  is_active: boolean;
+  min_send_amount: string | null;
+  max_send_amount: string | null;
+  display_order: number;
+  providers: CorridorPayoutProvider[];
+};
+
 export type SenderProfile = {
   id: string;
   user: string;
@@ -105,6 +132,7 @@ export type Corridor = {
   is_active: boolean;
   min_send_amount: string;
   max_send_amount: string;
+  payout_methods: CorridorPayoutMethod[];
 };
 
 export type RateEstimate = {
@@ -188,6 +216,8 @@ export type Transfer = {
   destination_currency: string;
   destination_currency_details: Currency;
   payout_method: "mobile_money" | "bank_deposit";
+  payout_provider: string | null;
+  payout_provider_details: PayoutProvider | null;
   send_amount: string;
   fee_amount: string;
   exchange_rate: string;
@@ -204,6 +234,7 @@ export type Transfer = {
   sender_email: string;
   sender_name: string;
   latest_payment_instruction: PaymentInstruction | null;
+  latest_payout_attempt: PayoutAttempt | null;
   status_events: Array<{
     id: string;
     from_status: string;
@@ -284,6 +315,9 @@ export type OperationalTransfer = Transfer & {
   compliance_flags: ComplianceFlag[];
   compliance_events: ComplianceEvent[];
   sanctions_checks: SanctionsCheck[];
+  payment_actions: PaymentAction[];
+  payout_attempts: PayoutAttempt[];
+  payout_events: PayoutEvent[];
 };
 
 export type MockPaymentMethod = "debit_card" | "bank_transfer";
@@ -343,6 +377,86 @@ export type PaymentInstruction = {
   refunded_at: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type PaymentAction = {
+  id: string;
+  transfer: string;
+  payment_instruction: string;
+  action: string;
+  action_display: string;
+  status: string;
+  status_display: string;
+  amount: string;
+  currency: Currency;
+  provider_name: string;
+  provider_reference: string;
+  provider_action_reference: string;
+  reason_code: string;
+  note: string;
+  failure_reason: string;
+  metadata: Record<string, unknown>;
+  requested_by_email: string;
+  processed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PaymentActionPayload = {
+  action: string;
+  payment_instruction_id?: string | null;
+  amount?: string | null;
+  reason_code?: string;
+  note: string;
+};
+
+export type PayoutAttempt = {
+  id: string;
+  transfer: string;
+  retry_of: string | null;
+  provider: PayoutProvider;
+  payout_method: "mobile_money" | "bank_deposit";
+  provider_reference: string;
+  attempt_number: number;
+  amount: string;
+  currency: Currency;
+  status: string;
+  status_display: string;
+  provider_status: string;
+  status_reason: string;
+  destination_snapshot: Record<string, unknown>;
+  request_payload: Record<string, unknown>;
+  response_payload: Record<string, unknown>;
+  submitted_at: string | null;
+  completed_at: string | null;
+  failed_at: string | null;
+  reversed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PayoutEvent = {
+  id: string;
+  transfer: string;
+  payout_attempt: string | null;
+  action: string;
+  action_display: string;
+  from_payout_status: string;
+  to_payout_status: string;
+  provider_event_id: string;
+  note: string;
+  metadata: Record<string, unknown>;
+  performed_by_email: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PayoutSyncPayload = {
+  payout_status: string;
+  provider_event_id?: string;
+  provider_status?: string;
+  status_reason?: string;
+  metadata?: Record<string, unknown>;
 };
 
 export type CardPaymentAuthorizationPayload = {
@@ -687,6 +801,84 @@ export function applyTransferComplianceAction(
 ) {
   return apiFetch<OperationalTransfer>(
     `/transfers/${id}/compliance-actions`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function applyTransferPaymentAction(
+  id: string,
+  payload: PaymentActionPayload,
+  token: string,
+) {
+  return apiFetch<OperationalTransfer>(
+    `/transfers/${id}/payment-actions`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function submitTransferPayout(
+  id: string,
+  payload: { note?: string },
+  token: string,
+) {
+  return apiFetch<OperationalTransfer>(
+    `/transfers/${id}/payout-attempts`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function syncTransferPayoutAttempt(
+  transferId: string,
+  attemptId: string,
+  payload: PayoutSyncPayload,
+  token: string,
+) {
+  return apiFetch<OperationalTransfer>(
+    `/transfers/${transferId}/payout-attempts/${attemptId}/sync`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function retryTransferPayoutAttempt(
+  transferId: string,
+  attemptId: string,
+  payload: { note: string },
+  token: string,
+) {
+  return apiFetch<OperationalTransfer>(
+    `/transfers/${transferId}/payout-attempts/${attemptId}/retry`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function reverseTransferPayoutAttempt(
+  transferId: string,
+  attemptId: string,
+  payload: { note: string },
+  token: string,
+) {
+  return apiFetch<OperationalTransfer>(
+    `/transfers/${transferId}/payout-attempts/${attemptId}/reverse`,
     {
       method: "POST",
       body: JSON.stringify(payload),

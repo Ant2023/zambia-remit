@@ -1,6 +1,7 @@
 import type { AuthSession } from "@/lib/api";
 
-const AUTH_SESSION_KEY = "zambiaRemitCustomerSession";
+const AUTH_SESSION_KEY = "mbongoPayCustomerSession";
+const LEGACY_AUTH_SESSION_KEY = "zambiaRemitCustomerSession";
 const FLOW_SESSION_KEYS = [
   "latestTransfer",
   "createdRecipient",
@@ -14,7 +15,9 @@ const FLOW_SESSION_KEYS = [
 ];
 
 export function getStoredAuthSession(): AuthSession | null {
-  const rawSession = window.sessionStorage.getItem(AUTH_SESSION_KEY);
+  const rawSession =
+    window.sessionStorage.getItem(AUTH_SESSION_KEY) ??
+    window.sessionStorage.getItem(LEGACY_AUTH_SESSION_KEY);
 
   if (!rawSession) {
     return null;
@@ -27,9 +30,12 @@ export function getStoredAuthSession(): AuthSession | null {
       return null;
     }
 
+    window.sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
+    window.sessionStorage.removeItem(LEGACY_AUTH_SESSION_KEY);
     return session;
   } catch {
     window.sessionStorage.removeItem(AUTH_SESSION_KEY);
+    window.sessionStorage.removeItem(LEGACY_AUTH_SESSION_KEY);
     return null;
   }
 }
@@ -45,6 +51,7 @@ export function isValidAuthSession(session: unknown): session is AuthSession {
 
 export function saveAuthSession(session: AuthSession) {
   window.sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
+  window.sessionStorage.removeItem(LEGACY_AUTH_SESSION_KEY);
 }
 
 export function clearTransferDraft() {
@@ -53,6 +60,7 @@ export function clearTransferDraft() {
 
 export function clearCustomerSessionOnly() {
   window.sessionStorage.removeItem(AUTH_SESSION_KEY);
+  window.sessionStorage.removeItem(LEGACY_AUTH_SESSION_KEY);
 }
 
 export function clearAuthSession() {

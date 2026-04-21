@@ -6,9 +6,16 @@ from .models import (
     Transfer,
     TransferComplianceEvent,
     TransferComplianceFlag,
+    TransferPaymentAction,
     TransferPaymentInstruction,
     TransferPaymentWebhookEvent,
+    TransferPayoutAttempt,
     TransferStatusEvent,
+)
+from .payouts import (
+    apply_payout_attempt_status,
+    get_latest_payout_attempt,
+    submit_payout_for_transfer,
 )
 
 
@@ -68,7 +75,7 @@ STATUS_SIDE_EFFECTS = {
     Transfer.Status.APPROVED: {
         "funding_status": Transfer.FundingStatus.RECEIVED,
         "compliance_status": Transfer.ComplianceStatus.APPROVED,
-        "payout_status": Transfer.PayoutStatus.PENDING,
+        "payout_status": Transfer.PayoutStatus.QUEUED,
     },
     Transfer.Status.PROCESSING_PAYOUT: {
         "funding_status": Transfer.FundingStatus.RECEIVED,
@@ -78,12 +85,12 @@ STATUS_SIDE_EFFECTS = {
     Transfer.Status.PAID_OUT: {
         "funding_status": Transfer.FundingStatus.RECEIVED,
         "compliance_status": Transfer.ComplianceStatus.APPROVED,
-        "payout_status": Transfer.PayoutStatus.PAID,
+        "payout_status": Transfer.PayoutStatus.PAID_OUT,
     },
     Transfer.Status.COMPLETED: {
         "funding_status": Transfer.FundingStatus.RECEIVED,
         "compliance_status": Transfer.ComplianceStatus.APPROVED,
-        "payout_status": Transfer.PayoutStatus.PAID,
+        "payout_status": Transfer.PayoutStatus.PAID_OUT,
     },
     Transfer.Status.REJECTED: {
         "compliance_status": Transfer.ComplianceStatus.REJECTED,
@@ -417,6 +424,140 @@ def process_payment_webhook_event(
 
 
 @transaction.atomic
+def create_payment_action(
+    transfer: Transfer,
+    *,
+    action: str,
+    requested_by,
+    payment_instruction: TransferPaymentInstruction | None = None,
+    amount=None,
+    reason_code: str = "",
+    note: str = "",
+) -> TransferPaymentAction:
+    if not note.strip():
+        raise serializers.ValidationError({"note": "Add a note for this payment action."})
+
+    instruction = payment_instruction
+    if instruction is None:
+        instruction = (
+            transfer.payment_instructions.select_for_update()
+            .select_related("currency")
+            .order_by("-created_at")
+            .first()
+        )
+
+    if instruction is None:
+        raise serializers.ValidationError(
+            {"payment_instruction_id": "No payment instruction exists for this transfer."},
+        )
+
+    if instruction.transfer_id != transfer.id:
+        raise serializers.ValidationError(
+            {"payment_instruction_id": "Payment instruction does not belong to this transfer."},
+        )
+
+    if instruction.status in {
+        TransferPaymentInstruction.Status.REFUNDED,
+        TransferPaymentInstruction.Status.REVERSED,
+    }:
+        raise serializers.ValidationError(
+            {"payment_instruction_id": "This payment has already been reversed or refunded."},
+        )
+
+    if action == TransferPaymentAction.Action.REFUND:
+        if instruction.status != TransferPaymentInstruction.Status.PAID:
+            raise serializers.ValidationError(
+                {"action": "Only paid payment instructions can be refunded."},
+            )
+        target_status = TransferPaymentInstruction.Status.REFUNDED
+        action_prefix = "RFD"
+    elif action == TransferPaymentAction.Action.REVERSAL:
+        if instruction.status not in {
+            TransferPaymentInstruction.Status.AUTHORIZED,
+            TransferPaymentInstruction.Status.REQUIRES_REVIEW,
+        }:
+            raise serializers.ValidationError(
+                {
+                    "action": (
+                        "Only authorized or review-held payment instructions can be reversed."
+                    ),
+                },
+            )
+        target_status = TransferPaymentInstruction.Status.REVERSED
+        action_prefix = "REV"
+    else:
+        raise serializers.ValidationError({"action": "Unsupported payment action."})
+
+    action_amount = amount or instruction.amount
+    if action_amount != instruction.amount:
+        raise serializers.ValidationError(
+            {
+                "amount": (
+                    "Only full payment refunds and reversals are supported in this flow."
+                ),
+            },
+        )
+
+    payment_action = TransferPaymentAction.objects.create(
+        transfer=transfer,
+        payment_instruction=instruction,
+        action=action,
+        amount=action_amount,
+        currency=instruction.currency,
+        provider_name=instruction.provider_name,
+        provider_reference=instruction.provider_reference,
+        provider_action_reference="",
+        reason_code=reason_code.strip(),
+        note=note.strip(),
+        requested_by=requested_by,
+        metadata={
+            "processor_mode": "internal_manual",
+            "previous_payment_status": instruction.status,
+            "target_payment_status": target_status,
+        },
+    )
+    provider_action_reference = (
+        f"{action_prefix}-{instruction.provider_reference}-{payment_action.id.hex[:8].upper()}"
+    )
+
+    updated_transfer = apply_payment_instruction_status(
+        instruction,
+        target_status,
+        changed_by=requested_by,
+        note=(
+            f"Payment {payment_action.get_action_display().lower()} completed. "
+            f"{payment_action.note}"
+        ),
+        status_reason=payment_action.note,
+        instruction_updates={
+            "last_payment_action_id": str(payment_action.id),
+            "last_payment_action": payment_action.action,
+            "last_payment_action_reference": provider_action_reference,
+            "last_payment_action_reason_code": payment_action.reason_code,
+        },
+    )
+
+    payment_action.status = TransferPaymentAction.Status.COMPLETED
+    payment_action.provider_action_reference = provider_action_reference
+    payment_action.processed_at = timezone.now()
+    payment_action.metadata = {
+        **payment_action.metadata,
+        "resulting_payment_status": target_status,
+        "resulting_transfer_status": updated_transfer.status,
+    }
+    payment_action.save(
+        update_fields=(
+            "status",
+            "provider_action_reference",
+            "processed_at",
+            "metadata",
+            "updated_at",
+        ),
+    )
+    return payment_action
+
+
+@transaction.atomic
 def transition_transfer_status(
     transfer: Transfer,
     target_status: str,
@@ -425,6 +566,32 @@ def transition_transfer_status(
     note: str = "",
 ) -> Transfer:
     validate_transition(transfer, target_status)
+
+    if target_status == Transfer.Status.PROCESSING_PAYOUT:
+        attempt = submit_payout_for_transfer(
+            transfer,
+            changed_by=changed_by,
+            note=note,
+        )
+        return attempt.transfer
+
+    latest_payout_attempt = get_latest_payout_attempt(transfer)
+    if latest_payout_attempt and target_status in {
+        Transfer.Status.PAID_OUT,
+        Transfer.Status.FAILED,
+    }:
+        payout_status = (
+            TransferPayoutAttempt.Status.PAID_OUT
+            if target_status == Transfer.Status.PAID_OUT
+            else TransferPayoutAttempt.Status.FAILED
+        )
+        attempt = apply_payout_attempt_status(
+            latest_payout_attempt,
+            payout_status,
+            changed_by=changed_by,
+            note=note,
+        )
+        return attempt.transfer
 
     previous_status = transfer.status
     previous_compliance_status = transfer.compliance_status

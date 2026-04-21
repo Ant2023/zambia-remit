@@ -1,5 +1,6 @@
 from django.db import models
 
+from common.choices import PayoutMethod
 from common.models import BaseModel
 
 
@@ -86,3 +87,124 @@ class CountryCorridor(BaseModel):
 
     def __str__(self) -> str:
         return f"{self.source_country} to {self.destination_country}"
+
+
+class PayoutProvider(BaseModel):
+    code = models.SlugField(max_length=64, unique=True)
+    name = models.CharField(max_length=120)
+    payout_method = models.CharField(max_length=32, choices=PayoutMethod.choices)
+    is_active = models.BooleanField(default=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ("payout_method", "name")
+        indexes = [
+            models.Index(fields=("payout_method", "is_active")),
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class CorridorPayoutMethod(BaseModel):
+    corridor = models.ForeignKey(
+        CountryCorridor,
+        on_delete=models.CASCADE,
+        related_name="payout_methods",
+    )
+    payout_method = models.CharField(max_length=32, choices=PayoutMethod.choices)
+    is_active = models.BooleanField(default=True)
+    min_send_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    max_send_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    display_order = models.PositiveSmallIntegerField(default=100)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ("display_order", "payout_method")
+        indexes = [
+            models.Index(fields=("corridor", "payout_method", "is_active")),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("corridor", "payout_method"),
+                name="unique_corridor_payout_method",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(min_send_amount__isnull=True)
+                | models.Q(min_send_amount__gte=0),
+                name="corridor_payout_method_min_send_gte_0",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(max_send_amount__isnull=True)
+                | models.Q(min_send_amount__isnull=True)
+                | models.Q(max_send_amount__gte=models.F("min_send_amount")),
+                name="corridor_payout_method_max_gte_min",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.corridor} - {self.get_payout_method_display()}"
+
+
+class CorridorPayoutProvider(BaseModel):
+    corridor_payout_method = models.ForeignKey(
+        CorridorPayoutMethod,
+        on_delete=models.CASCADE,
+        related_name="providers",
+    )
+    provider = models.ForeignKey(
+        PayoutProvider,
+        on_delete=models.PROTECT,
+        related_name="corridor_routes",
+    )
+    is_active = models.BooleanField(default=True)
+    priority = models.PositiveSmallIntegerField(default=100)
+    min_send_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    max_send_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ("priority", "provider__name")
+        indexes = [
+            models.Index(fields=("corridor_payout_method", "is_active", "priority")),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("corridor_payout_method", "provider"),
+                name="unique_corridor_payout_provider",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(min_send_amount__isnull=True)
+                | models.Q(min_send_amount__gte=0),
+                name="corridor_payout_provider_min_send_gte_0",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(max_send_amount__isnull=True)
+                | models.Q(min_send_amount__isnull=True)
+                | models.Q(max_send_amount__gte=models.F("min_send_amount")),
+                name="corridor_payout_provider_max_gte_min",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.corridor_payout_method} via {self.provider}"

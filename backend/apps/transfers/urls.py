@@ -4,6 +4,11 @@ from .views import (
     StaffTransferAmlFlagReviewView,
     StaffTransferComplianceActionView,
     StaffTransferListView,
+    StaffTransferPaymentActionView,
+    StaffTransferPayoutAttemptView,
+    StaffTransferPayoutRetryView,
+    StaffTransferPayoutReverseView,
+    StaffTransferPayoutStatusSyncView,
     StaffTransferSanctionsCheckReviewView,
     StaffTransferStatusTransitionView,
     TransferDetailView,
@@ -12,6 +17,7 @@ from .views import (
     TransferListCreateView,
     TransferPaymentInstructionView,
     TransferPaymentWebhookView,
+    TransferPayoutWebhookView,
 )
 
 
@@ -21,6 +27,11 @@ urlpatterns = [
         "payment-webhooks/<str:provider_name>/",
         TransferPaymentWebhookView.as_view(),
         name="transfer-payment-webhook",
+    ),
+    path(
+        "payout-webhooks/<str:provider_code>/",
+        TransferPayoutWebhookView.as_view(),
+        name="transfer-payout-webhook",
     ),
     path(
         "operations/",
@@ -42,6 +53,31 @@ urlpatterns = [
         "<uuid:pk>/status/",
         StaffTransferStatusTransitionView.as_view(),
         name="transfer-status-transition",
+    ),
+    path(
+        "<uuid:pk>/payment-actions/",
+        StaffTransferPaymentActionView.as_view(),
+        name="transfer-payment-action",
+    ),
+    path(
+        "<uuid:pk>/payout-attempts/",
+        StaffTransferPayoutAttemptView.as_view(),
+        name="transfer-payout-attempt-list",
+    ),
+    path(
+        "<uuid:pk>/payout-attempts/<uuid:attempt_id>/sync/",
+        StaffTransferPayoutStatusSyncView.as_view(),
+        name="transfer-payout-attempt-sync",
+    ),
+    path(
+        "<uuid:pk>/payout-attempts/<uuid:attempt_id>/retry/",
+        StaffTransferPayoutRetryView.as_view(),
+        name="transfer-payout-attempt-retry",
+    ),
+    path(
+        "<uuid:pk>/payout-attempts/<uuid:attempt_id>/reverse/",
+        StaffTransferPayoutReverseView.as_view(),
+        name="transfer-payout-attempt-reverse",
     ),
     path(
         "<uuid:pk>/compliance-actions/",

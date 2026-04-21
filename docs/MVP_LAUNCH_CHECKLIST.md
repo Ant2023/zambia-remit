@@ -1,4 +1,4 @@
-# Zambia Remit MVP Launch Checklist
+# MbongoPay MVP Launch Checklist
 
 ## Deployment Order
 

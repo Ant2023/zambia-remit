@@ -137,7 +137,7 @@ STATIC_ROOT = ROOT_DIR / "staticfiles"
 MEDIA_URL = "media/"
 MEDIA_ROOT = ROOT_DIR / "media"
 
-DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", "support@zambia-remit.local")
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", "support@mbongopay.local")
 FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", "http://localhost:3000").rstrip("/")
 CARD_PAYMENT_PROCESSOR = env("CARD_PAYMENT_PROCESSOR", "mock_card_processor")
 BANK_TRANSFER_PAYMENT_PROCESSOR = env(

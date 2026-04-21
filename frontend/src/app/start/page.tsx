@@ -34,7 +34,7 @@ export default function StartPage() {
       <main className="auth-page">
         <section className="auth-shell">
         <div className="auth-card">
-          <div className="auth-icon">FX</div>
+          <div className="auth-icon">MP</div>
           <p className="auth-eyebrow">Continue your transfer</p>
           <h1>Create your profile</h1>
           <p className="auth-copy">

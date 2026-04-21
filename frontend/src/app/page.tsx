@@ -156,9 +156,9 @@ export default function Home() {
       <header className="premium-nav">
         <div className="premium-nav-inner">
           <Link className="premium-brand" href="/">
-            <span className="brand-mark">FX</span>
+            <span className="brand-mark">MP</span>
             <span>
-              <span className="brand-name">Zambia Remit</span>
+              <span className="brand-name">MbongoPay</span>
               <span className="brand-subtitle">Cross-border money transfers</span>
             </span>
           </Link>
@@ -421,9 +421,9 @@ export default function Home() {
           <div className="footer-cta-row">
             <div>
               <Link className="premium-brand footer-brand" href="/">
-                <span className="brand-mark">FX</span>
+                <span className="brand-mark">MP</span>
                 <span>
-                  <span className="brand-name">Zambia Remit</span>
+                  <span className="brand-name">MbongoPay</span>
                   <span className="brand-subtitle">
                     Cross-border money transfers
                   </span>
@@ -470,7 +470,7 @@ export default function Home() {
           </div>
 
           <div className="footer-bottom">
-            <p>&copy; 2026 Zambia Remit. All rights reserved.</p>
+            <p>&copy; 2026 MbongoPay. All rights reserved.</p>
             <p>
               Modern cross-border payments with clarity, security, and confidence.
             </p>

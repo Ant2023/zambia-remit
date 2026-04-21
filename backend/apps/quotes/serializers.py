@@ -13,6 +13,7 @@ from .services import (
     calculate_fee_amount,
     calculate_receive_amount,
     get_rate_for_corridor,
+    validate_corridor_payout_method,
     validate_payout_method,
     validate_send_amount,
 )
@@ -115,7 +116,7 @@ class QuoteSerializer(serializers.ModelSerializer):
             )
 
         validate_send_amount(corridor, send_amount)
-        validate_payout_method(payout_method)
+        validate_corridor_payout_method(corridor, payout_method, send_amount)
         rate_result = get_rate_for_corridor(corridor)
 
         recipient = None
@@ -221,10 +222,13 @@ def build_rate_payload(corridor, exchange_rate, send_amount=None, payout_method=
     if send_amount is not None:
         validate_send_amount(corridor, send_amount)
         method = payout_method or "mobile_money"
-        validate_payout_method(method)
+        validate_corridor_payout_method(corridor, method, send_amount)
         fee_amount = calculate_fee_amount(corridor, method, send_amount)
         receive_amount = calculate_receive_amount(send_amount, exchange_rate)
         total_amount = (send_amount + fee_amount).quantize(Decimal("0.01"))
+    elif payout_method is not None:
+        validate_payout_method(payout_method)
+        validate_corridor_payout_method(corridor, payout_method)
 
     return {
         "corridor_id": corridor.id,

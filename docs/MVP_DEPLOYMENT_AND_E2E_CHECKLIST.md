@@ -1,4 +1,4 @@
-# Zambia Remit MVP Deployment and E2E Checklist
+# MbongoPay MVP Deployment and E2E Checklist
 
 ## Local PostgreSQL Setup
 

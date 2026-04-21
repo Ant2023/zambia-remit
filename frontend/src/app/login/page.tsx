@@ -79,7 +79,7 @@ export default function LoginPage() {
       <main className="auth-page">
         <section className="auth-shell">
         <div className="auth-card auth-card-wide">
-          <div className="auth-icon">FX</div>
+          <div className="auth-icon">MP</div>
           <p className="auth-eyebrow">Customer access</p>
           <h1>{mode === "login" ? "Log in" : "Create account"}</h1>
           <p className="auth-copy">
