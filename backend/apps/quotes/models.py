@@ -5,6 +5,40 @@ from common.choices import PayoutMethod
 from common.models import BaseModel
 
 
+class ExchangeRate(BaseModel):
+    corridor = models.ForeignKey(
+        "countries.CountryCorridor",
+        on_delete=models.CASCADE,
+        related_name="exchange_rates",
+    )
+    rate = models.DecimalField(max_digits=18, decimal_places=8)
+    provider_name = models.CharField(max_length=120, default="manual")
+    is_active = models.BooleanField(default=True)
+    effective_at = models.DateTimeField()
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-effective_at", "-created_at")
+        indexes = [
+            models.Index(fields=("corridor", "is_active", "effective_at")),
+            models.Index(fields=("expires_at",)),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(rate__gt=0),
+                name="exchange_rate_rate_gt_0",
+            ),
+            models.UniqueConstraint(
+                fields=("corridor", "provider_name"),
+                condition=models.Q(is_active=True),
+                name="unique_active_exchange_rate_per_provider",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.corridor} @ {self.rate}"
+
+
 class FeeRule(BaseModel):
     corridor = models.ForeignKey(
         "countries.CountryCorridor",

@@ -8,11 +8,14 @@ import type {
   AuthSession,
   Country,
   MockPaymentMethod,
+  PaymentInstruction,
   SenderProfile,
   SenderProfilePayload,
   Transfer,
 } from "@/lib/api";
 import {
+  authorizeCardPaymentInstruction,
+  createPaymentInstruction,
   formatApiError,
   getSenderCountries,
   getSenderProfile,
@@ -26,6 +29,10 @@ const paymentMethods: Array<{ value: MockPaymentMethod; label: string }> = [
   { value: "debit_card", label: "Debit card" },
   { value: "bank_transfer", label: "Bank transfer" },
 ];
+
+function formatProviderName(value: string) {
+  return value.replaceAll("_", " ");
+}
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", {
@@ -45,10 +52,19 @@ export default function FundingPage() {
   const [senderProfile, setSenderProfile] = useState<SenderProfile | null>(null);
   const [senderCountries, setSenderCountries] = useState<Country[]>([]);
   const [editingSenderDetails, setEditingSenderDetails] = useState(false);
+  const [paymentInstruction, setPaymentInstruction] =
+    useState<PaymentInstruction | null>(null);
   const [paymentMethod, setPaymentMethod] =
     useState<MockPaymentMethod>("debit_card");
+  const [cardholderName, setCardholderName] = useState("");
+  const [cardNumber, setCardNumber] = useState("4242 4242 4242 4242");
+  const [expiryMonth, setExpiryMonth] = useState("12");
+  const [expiryYear, setExpiryYear] = useState("2030");
+  const [cvv, setCvv] = useState("123");
   const [note, setNote] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingPaymentInstruction, setLoadingPaymentInstruction] = useState(false);
+  const [authorizingPayment, setAuthorizingPayment] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -69,6 +85,10 @@ export default function FundingPage() {
       const parsedTransfer = JSON.parse(savedTransfer) as Transfer;
       if (!id || parsedTransfer.id === id) {
         setTransfer(parsedTransfer);
+        setPaymentInstruction(parsedTransfer.latest_payment_instruction);
+        if (parsedTransfer.latest_payment_instruction) {
+          setPaymentMethod(parsedTransfer.latest_payment_instruction.payment_method);
+        }
       }
     }
 
@@ -121,6 +141,10 @@ export default function FundingPage() {
     try {
       const data = await getTransfer(id, token);
       setTransfer(data);
+      setPaymentInstruction(data.latest_payment_instruction);
+      if (data.latest_payment_instruction) {
+        setPaymentMethod(data.latest_payment_instruction.payment_method);
+      }
       window.sessionStorage.setItem("latestTransfer", JSON.stringify(data));
     } catch (apiError) {
       setError(formatApiError(apiError));
@@ -148,6 +172,11 @@ export default function FundingPage() {
       return;
     }
 
+    if (!paymentInstruction) {
+      setError("Prepare payment instructions before confirming funding.");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -155,6 +184,7 @@ export default function FundingPage() {
         transfer.id,
         {
           payment_method: paymentMethod,
+          payment_instruction_id: paymentInstruction.id,
           note,
         },
         authSession.token,
@@ -169,6 +199,105 @@ export default function FundingPage() {
       setError(formatApiError(apiError));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handlePreparePaymentInstruction() {
+    setError("");
+
+    if (!transfer) {
+      setError("Load the transfer before preparing payment instructions.");
+      return;
+    }
+
+    if (!authSession?.token) {
+      setError("Log in with a customer account first.");
+      return;
+    }
+
+    if (!senderProfile?.is_complete) {
+      setError("Add sender details before preparing payment instructions.");
+      return;
+    }
+
+    setLoadingPaymentInstruction(true);
+
+    try {
+      const instruction = await createPaymentInstruction(
+        transfer.id,
+        { payment_method: paymentMethod },
+        authSession.token,
+      );
+      setPaymentInstruction(instruction);
+      setTransfer((currentTransfer) =>
+        currentTransfer
+          ? {
+              ...currentTransfer,
+              latest_payment_instruction: instruction,
+            }
+          : currentTransfer,
+      );
+    } catch (apiError) {
+      setError(formatApiError(apiError));
+    } finally {
+      setLoadingPaymentInstruction(false);
+    }
+  }
+
+  async function handleAuthorizePayment() {
+    setError("");
+
+    if (!transfer) {
+      setError("Load the transfer before authorizing payment.");
+      return;
+    }
+
+    if (!authSession?.token) {
+      setError("Log in with a customer account first.");
+      return;
+    }
+
+    if (!paymentInstruction) {
+      setError("Prepare payment instructions before authorizing payment.");
+      return;
+    }
+
+    if (
+      paymentInstruction.payment_method !== "debit_card" ||
+      paymentMethod !== "debit_card"
+    ) {
+      setError("Only debit card instructions support authorization.");
+      return;
+    }
+
+    setAuthorizingPayment(true);
+
+    try {
+      const authorizedInstruction = await authorizeCardPaymentInstruction(
+        transfer.id,
+        paymentInstruction.id,
+        {
+          cardholder_name: cardholderName.trim(),
+          card_number: cardNumber,
+          expiry_month: Number(expiryMonth),
+          expiry_year: Number(expiryYear),
+          cvv,
+        },
+        authSession.token,
+      );
+      setPaymentInstruction(authorizedInstruction);
+      setTransfer((currentTransfer) =>
+        currentTransfer
+          ? {
+              ...currentTransfer,
+              latest_payment_instruction: authorizedInstruction,
+            }
+          : currentTransfer,
+      );
+    } catch (apiError) {
+      setError(formatApiError(apiError));
+    } finally {
+      setAuthorizingPayment(false);
     }
   }
 
@@ -226,7 +355,21 @@ export default function FundingPage() {
   const isFunded =
     transfer?.status === "funding_received" ||
     transfer?.funding_status === "received";
-  const canConfirmFunding = Boolean(transfer && senderProfile?.is_complete);
+  const isCardPayment =
+    paymentMethod === "debit_card" ||
+    paymentInstruction?.payment_method === "debit_card";
+  const isCardAuthorized =
+    paymentInstruction?.status === "authorized" ||
+    paymentInstruction?.status === "paid";
+  const canConfirmFunding = Boolean(
+    transfer &&
+      senderProfile?.is_complete &&
+      paymentInstruction &&
+      (paymentInstruction.payment_method !== "debit_card" || isCardAuthorized),
+  );
+  const selectedPaymentMethodLabel =
+    paymentMethods.find((method) => method.value === paymentMethod)?.label ??
+    "Payment";
 
   return (
     <>
@@ -300,7 +443,7 @@ export default function FundingPage() {
                 </div>
               </dl>
             ) : (
-              <p className="muted">Load the transaction to continue.</p>
+                <p className="muted">Load the transaction to continue.</p>
             )}
           </section>
 
@@ -419,7 +562,7 @@ export default function FundingPage() {
             </section>
 
             <section className="panel stack">
-              <h2>Payment confirmation</h2>
+              <h2>Payment instructions</h2>
 
               {isFunded ? (
                 <>
@@ -442,9 +585,13 @@ export default function FundingPage() {
                     Payment method
                     <select
                       value={paymentMethod}
-                      onChange={(event) =>
-                        setPaymentMethod(event.target.value as MockPaymentMethod)
-                      }
+                      onChange={(event) => {
+                        const nextMethod = event.target.value as MockPaymentMethod;
+                        setPaymentMethod(nextMethod);
+                        if (paymentInstruction?.payment_method !== nextMethod) {
+                          setPaymentInstruction(null);
+                        }
+                      }}
                     >
                       {paymentMethods.map((method) => (
                         <option key={method.value} value={method.value}>
@@ -454,8 +601,287 @@ export default function FundingPage() {
                     </select>
                   </label>
 
+                  {paymentInstruction ? (
+                    <div className="payment-instruction-box stack">
+                      <div>
+                        <p className="kicker">
+                          {paymentInstruction.status_display}
+                        </p>
+                        <h3>
+                          {paymentInstruction.instructions.title ??
+                            selectedPaymentMethodLabel}
+                        </h3>
+                        <p className="muted small">
+                          {paymentInstruction.instructions.summary ??
+                            "Use these details to fund the transfer."}
+                        </p>
+                      </div>
+
+                      <dl className="summary-list">
+                        <div>
+                          <dt>Total to pay</dt>
+                          <dd>
+                            {paymentInstruction.amount}{" "}
+                            {paymentInstruction.currency.code}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Payment reference</dt>
+                          <dd>{paymentInstruction.provider_reference}</dd>
+                        </div>
+                        <div>
+                          <dt>Provider</dt>
+                          <dd>{formatProviderName(paymentInstruction.provider_name)}</dd>
+                        </div>
+                        {paymentInstruction.instructions.processor_display_name ? (
+                          <div>
+                            <dt>Processor</dt>
+                            <dd>
+                              {paymentInstruction.instructions.processor_display_name}
+                            </dd>
+                          </div>
+                        ) : null}
+                        {paymentInstruction.instructions.session_reference ? (
+                          <div>
+                            <dt>Session</dt>
+                            <dd>
+                              {paymentInstruction.instructions.session_reference}
+                            </dd>
+                          </div>
+                        ) : null}
+                        {paymentInstruction.instructions.next_action ? (
+                          <div>
+                            <dt>Next action</dt>
+                            <dd>
+                              {paymentInstruction.instructions.next_action.replaceAll(
+                                "_",
+                                " ",
+                              )}
+                            </dd>
+                          </div>
+                        ) : null}
+                        {paymentInstruction.instructions.test_card ? (
+                          <div>
+                            <dt>Test card</dt>
+                            <dd>{paymentInstruction.instructions.test_card}</dd>
+                          </div>
+                        ) : null}
+                        {paymentInstruction.instructions.bank_name ? (
+                          <div>
+                            <dt>Bank</dt>
+                            <dd>{paymentInstruction.instructions.bank_name}</dd>
+                          </div>
+                        ) : null}
+                        {paymentInstruction.instructions.account_number ? (
+                          <div>
+                            <dt>Account number</dt>
+                            <dd>{paymentInstruction.instructions.account_number}</dd>
+                          </div>
+                        ) : null}
+                        {paymentInstruction.instructions.routing_number ? (
+                          <div>
+                            <dt>Routing number</dt>
+                            <dd>{paymentInstruction.instructions.routing_number}</dd>
+                          </div>
+                        ) : null}
+                      </dl>
+
+                      {paymentInstruction.instructions.steps?.length ? (
+                        <ol className="instruction-list">
+                          {paymentInstruction.instructions.steps.map((step) => (
+                            <li key={step}>{step}</li>
+                          ))}
+                        </ol>
+                      ) : null}
+
+                      {paymentInstruction.instructions.test_cards?.length ? (
+                        <div className="stack">
+                          <h3>Test outcomes</h3>
+                          <dl className="summary-list">
+                            {paymentInstruction.instructions.test_cards.map((card) => (
+                              <div key={card.number}>
+                                <dt>{card.number}</dt>
+                                <dd>
+                                  {card.outcome.replaceAll("_", " ")}
+                                  {card.description ? ` - ${card.description}` : ""}
+                                </dd>
+                              </div>
+                            ))}
+                          </dl>
+                        </div>
+                      ) : null}
+
+                      {paymentInstruction.instructions.authorization_masked_card ? (
+                        <dl className="summary-list">
+                          <div>
+                            <dt>Authorized card</dt>
+                            <dd>
+                              {paymentInstruction.instructions.authorization_masked_card}
+                            </dd>
+                          </div>
+                          {paymentInstruction.instructions.authorization_reference ? (
+                            <div>
+                              <dt>Authorization</dt>
+                              <dd>
+                                {
+                                  paymentInstruction.instructions
+                                    .authorization_reference
+                                }
+                              </dd>
+                            </div>
+                          ) : null}
+                        </dl>
+                      ) : null}
+
+                      {paymentInstruction.status === "pending_authorization" ? (
+                        <p className="notice small">
+                          Authorize the card before confirming that funding was
+                          received.
+                        </p>
+                      ) : null}
+
+                      {paymentInstruction.status === "requires_review" ? (
+                        <p className="notice small">
+                          This payment needs review before the transfer can move
+                          forward.
+                        </p>
+                      ) : null}
+
+                      {paymentInstruction.status === "failed" ? (
+                        <p className="error small">
+                          {paymentInstruction.status_reason ||
+                            "The card authorization failed. Try a different test card or prepare a new instruction."}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="notice small">
+                      Prepare payment instructions for {selectedPaymentMethodLabel}.
+                    </p>
+                  )}
+
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={
+                      loadingPaymentInstruction ||
+                      !transfer ||
+                      !senderProfile?.is_complete ||
+                      !authSession
+                    }
+                    onClick={handlePreparePaymentInstruction}
+                  >
+                    {loadingPaymentInstruction
+                      ? "Preparing..."
+                      : paymentInstruction
+                        ? "Prepare new instructions"
+                        : "Prepare payment instructions"}
+                  </button>
+
+                  {paymentInstruction &&
+                  paymentInstruction.payment_method === "debit_card" &&
+                  !isFunded ? (
+                    <div className="stack">
+                      <div>
+                        <p className="kicker">Card authorization</p>
+                        <h3>Authorize your debit card</h3>
+                        <p className="muted small">
+                          Use one of the available test cards to simulate an
+                          approved, declined, or review-required authorization.
+                        </p>
+                      </div>
+
+                      <div className="stack">
+                        <div className="form-grid">
+                          <label>
+                            Cardholder name
+                            <input
+                              value={cardholderName}
+                              onChange={(event) =>
+                                setCardholderName(event.target.value)
+                              }
+                              autoComplete="cc-name"
+                              placeholder="Sam Sender"
+                              required
+                            />
+                          </label>
+
+                          <label>
+                            Card number
+                            <input
+                              value={cardNumber}
+                              onChange={(event) =>
+                                setCardNumber(event.target.value)
+                              }
+                              autoComplete="cc-number"
+                              inputMode="numeric"
+                              placeholder="4242 4242 4242 4242"
+                              required
+                            />
+                          </label>
+
+                          <label>
+                            Expiry month
+                            <input
+                              value={expiryMonth}
+                              onChange={(event) =>
+                                setExpiryMonth(event.target.value)
+                              }
+                              autoComplete="cc-exp-month"
+                              inputMode="numeric"
+                              placeholder="12"
+                              required
+                            />
+                          </label>
+
+                          <label>
+                            Expiry year
+                            <input
+                              value={expiryYear}
+                              onChange={(event) =>
+                                setExpiryYear(event.target.value)
+                              }
+                              autoComplete="cc-exp-year"
+                              inputMode="numeric"
+                              placeholder="2030"
+                              required
+                            />
+                          </label>
+
+                          <label>
+                            Security code
+                            <input
+                              value={cvv}
+                              onChange={(event) => setCvv(event.target.value)}
+                              autoComplete="cc-csc"
+                              inputMode="numeric"
+                              placeholder="123"
+                              required
+                            />
+                          </label>
+                        </div>
+
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          disabled={
+                            authorizingPayment ||
+                            !cardholderName.trim() ||
+                            !cardNumber.trim() ||
+                            !expiryMonth.trim() ||
+                            !expiryYear.trim() ||
+                            !cvv.trim()
+                          }
+                          onClick={() => void handleAuthorizePayment()}
+                        >
+                          {authorizingPayment ? "Authorizing..." : "Authorize card"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
                   <label>
-                    Internal note
+                    Funding note
                     <textarea
                       rows={3}
                       value={note}
@@ -465,7 +891,11 @@ export default function FundingPage() {
                   </label>
 
                   <button type="submit" disabled={loading || !canConfirmFunding}>
-                    {loading ? "Marking funded..." : "Mark as funded"}
+                    {loading
+                      ? "Confirming..."
+                      : isCardPayment && !isCardAuthorized
+                        ? "Authorize card to continue"
+                        : "Confirm funding received"}
                   </button>
                 </form>
               )}

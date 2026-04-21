@@ -3,6 +3,7 @@ import uuid
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from common.models import BaseModel
@@ -57,6 +58,7 @@ class SenderProfile(BaseModel):
     class KycStatus(models.TextChoices):
         NOT_STARTED = "not_started", "Not started"
         PENDING = "pending", "Pending"
+        NEEDS_REVIEW = "needs_review", "Needs review"
         VERIFIED = "verified", "Verified"
         REJECTED = "rejected", "Rejected"
 
@@ -84,11 +86,63 @@ class SenderProfile(BaseModel):
         choices=KycStatus.choices,
         default=KycStatus.NOT_STARTED,
     )
+    kyc_submitted_at = models.DateTimeField(null=True, blank=True)
+    kyc_reviewed_at = models.DateTimeField(null=True, blank=True)
+    kyc_reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="reviewed_sender_profiles",
+        null=True,
+        blank=True,
+    )
+    kyc_review_note = models.TextField(blank=True)
 
     class Meta:
         indexes = [
             models.Index(fields=("country", "kyc_status")),
+            models.Index(fields=("kyc_status", "kyc_submitted_at")),
         ]
+
+    @property
+    def is_complete(self) -> bool:
+        return bool(
+            self.user.first_name
+            and self.user.last_name
+            and self.phone_number
+            and self.country_id
+        )
+
+    def submit_kyc(self) -> None:
+        self.kyc_status = self.KycStatus.PENDING
+        self.kyc_submitted_at = timezone.now()
+        self.kyc_reviewed_at = None
+        self.kyc_reviewed_by = None
+        self.kyc_review_note = ""
+        self.save(
+            update_fields=(
+                "kyc_status",
+                "kyc_submitted_at",
+                "kyc_reviewed_at",
+                "kyc_reviewed_by",
+                "kyc_review_note",
+                "updated_at",
+            ),
+        )
+
+    def mark_kyc_reviewed(self, *, status: str, reviewed_by, note: str = "") -> None:
+        self.kyc_status = status
+        self.kyc_reviewed_at = timezone.now()
+        self.kyc_reviewed_by = reviewed_by
+        self.kyc_review_note = note
+        self.save(
+            update_fields=(
+                "kyc_status",
+                "kyc_reviewed_at",
+                "kyc_reviewed_by",
+                "kyc_review_note",
+                "updated_at",
+            ),
+        )
 
     def __str__(self) -> str:
         return f"Profile for {self.user.email}"

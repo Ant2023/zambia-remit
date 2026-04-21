@@ -1,21 +1,17 @@
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 
+from django.db.models import Q
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.countries.models import CountryCorridor
 from common.choices import PayoutMethod
 
-from .models import FeeRule
+from .models import ExchangeRate, FeeRule
 
 
 MONEY_QUANT = Decimal("0.01")
-
-STATIC_ZMW_RATES = {
-    "USD": Decimal("25.50000000"),
-    "GBP": Decimal("32.25000000"),
-    "EUR": Decimal("27.40000000"),
-}
 
 
 @dataclass(frozen=True)
@@ -28,18 +24,23 @@ def get_rate_for_corridor(corridor: CountryCorridor) -> RateResult:
     if not corridor.is_active:
         raise serializers.ValidationError({"corridor_id": "Selected route is not active."})
 
-    if corridor.destination_currency.code != "ZMW":
-        raise serializers.ValidationError(
-            {"destination_country_id": "Only Zambia is supported at this time."},
+    now = timezone.now()
+    exchange_rate = (
+        ExchangeRate.objects.filter(
+            corridor=corridor,
+            is_active=True,
+            effective_at__lte=now,
         )
-
-    exchange_rate = STATIC_ZMW_RATES.get(corridor.source_currency.code)
+        .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
+        .order_by("-effective_at", "-created_at")
+        .first()
+    )
     if not exchange_rate:
         raise serializers.ValidationError(
-            {"source_country_id": "No exchange rate is available for this sender country."},
+            {"corridor_id": "No exchange rate is available for this route."},
         )
 
-    return RateResult(corridor=corridor, exchange_rate=exchange_rate)
+    return RateResult(corridor=corridor, exchange_rate=exchange_rate.rate)
 
 
 def get_active_corridor(source_country_id: str, destination_country_id: str):
@@ -102,7 +103,14 @@ def calculate_fee_amount(
     )
 
     if not fee_rule:
-        return Decimal("0.00")
+        raise serializers.ValidationError(
+            {
+                "payout_method": (
+                    "No active fee rule is configured for this route, payout "
+                    "method, and amount."
+                )
+            },
+        )
 
     percentage_fee = send_amount * (fee_rule.percentage_fee / Decimal("100"))
     return (fee_rule.fixed_fee + percentage_fee).quantize(

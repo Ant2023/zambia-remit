@@ -6,6 +6,7 @@ import { AppNavbar } from "@/components/AppNavbar";
 import { FlowSummary } from "@/components/FlowSummary";
 import { MarketSelector } from "@/components/MarketSelector";
 import { RecipientForm } from "@/components/RecipientForm";
+import { SavedRecipientSelector } from "@/components/SavedRecipientSelector";
 import { TransferConfirmation } from "@/components/TransferConfirmation";
 import {
   type AuthSession,
@@ -17,12 +18,14 @@ import {
   formatApiError,
   getDestinationCountries,
   getRateEstimate,
+  getRecipients,
   getSenderCountries,
 } from "@/lib/api";
 import {
   clearTransferDraft,
   getStoredAuthSession,
 } from "@/lib/auth";
+import type { PayoutMethod } from "@/lib/transfer-options";
 
 export default function SendPage() {
   const router = useRouter();
@@ -33,14 +36,15 @@ export default function SendPage() {
   const [destinationCountryId, setDestinationCountryId] = useState("");
   const [sendAmount, setSendAmount] = useState("");
   const [rateEstimate, setRateEstimate] = useState<RateEstimate>();
+  const [savedRecipients, setSavedRecipients] = useState<Recipient[]>([]);
   const [recipient, setRecipient] = useState<Recipient>();
   const [quote, setQuote] = useState<Quote>();
-  const [payoutMethod, setPayoutMethod] = useState<"mobile_money" | "bank_deposit">(
-    "mobile_money",
-  );
+  const [payoutMethod, setPayoutMethod] =
+    useState<PayoutMethod>("mobile_money");
   const [reasonForSending, setReasonForSending] = useState("");
   const [providerName, setProviderName] = useState("");
   const [loadingDiscovery, setLoadingDiscovery] = useState(true);
+  const [loadingRecipients, setLoadingRecipients] = useState(false);
   const [loadingRate, setLoadingRate] = useState(false);
   const [error, setError] = useState("");
   const [rateError, setRateError] = useState("");
@@ -91,6 +95,15 @@ export default function SendPage() {
     setReasonForSending(savedReason);
     setProviderName(savedProvider);
   }, []);
+
+  useEffect(() => {
+    if (!authSession?.token) {
+      setSavedRecipients([]);
+      return;
+    }
+
+    loadSavedRecipients(authSession.token);
+  }, [authSession?.token]);
 
   useEffect(() => {
     async function loadCountries() {
@@ -188,15 +201,42 @@ export default function SendPage() {
     window.sessionStorage.removeItem("createdQuote");
   }
 
+  function clearSelectedRecipientDetails() {
+    setRecipient(undefined);
+    setReasonForSending("");
+    setProviderName("");
+    window.sessionStorage.removeItem("createdRecipient");
+    window.sessionStorage.removeItem("reasonForSending");
+    window.sessionStorage.removeItem("providerName");
+  }
+
   function handleSendAmountChange(value: string) {
     setSendAmount(value);
     window.sessionStorage.setItem("sendAmount", value);
     clearTransactionDetails();
   }
 
-  async function handleRecipientCreated(
-    createdRecipient: Recipient,
-    method: "mobile_money" | "bank_deposit",
+  async function loadSavedRecipients(token = authSession?.token) {
+    if (!token) {
+      return;
+    }
+
+    setLoadingRecipients(true);
+    setError("");
+
+    try {
+      const recipients = await getRecipients(token);
+      setSavedRecipients(recipients);
+    } catch (apiError) {
+      setError(formatApiError(apiError));
+    } finally {
+      setLoadingRecipients(false);
+    }
+  }
+
+  async function prepareRecipientReview(
+    nextRecipient: Recipient,
+    method: PayoutMethod,
     nextReasonForSending: string,
     nextProviderName: string,
   ) {
@@ -212,24 +252,24 @@ export default function SendPage() {
       throw new Error("Enter the amount to send first.");
     }
 
-    setRecipient(createdRecipient);
+    setRecipient(nextRecipient);
     setPayoutMethod(method);
     setReasonForSending(nextReasonForSending);
-    setProviderName(method === "mobile_money" ? nextProviderName : "Bank deposit");
+    setProviderName(nextProviderName || "Bank deposit");
     clearTransactionDetails();
 
-    window.sessionStorage.setItem("createdRecipient", JSON.stringify(createdRecipient));
+    window.sessionStorage.setItem("createdRecipient", JSON.stringify(nextRecipient));
     window.sessionStorage.setItem("payoutMethod", method);
     window.sessionStorage.setItem("reasonForSending", nextReasonForSending);
     window.sessionStorage.setItem(
       "providerName",
-      method === "mobile_money" ? nextProviderName : "Bank deposit",
+      nextProviderName || "Bank deposit",
     );
 
     const createdQuote = await createQuote(
       {
         corridor_id: rateEstimate.corridor_id,
-        recipient_id: createdRecipient.id,
+        recipient_id: nextRecipient.id,
         payout_method: method,
         send_amount: sendAmount,
       },
@@ -237,6 +277,24 @@ export default function SendPage() {
     );
 
     handleQuoteCreated(createdQuote);
+  }
+
+  async function handleRecipientCreated(
+    createdRecipient: Recipient,
+    method: PayoutMethod,
+    nextReasonForSending: string,
+    nextProviderName: string,
+  ) {
+    await prepareRecipientReview(
+      createdRecipient,
+      method,
+      nextReasonForSending,
+      method === "mobile_money" ? nextProviderName : "Bank deposit",
+    );
+
+    if (authSession?.token) {
+      loadSavedRecipients(authSession.token);
+    }
   }
 
   function handleQuoteCreated(createdQuote: Quote) {
@@ -297,23 +355,44 @@ export default function SendPage() {
                 onDestinationCountryChange={(value) => {
                   setDestinationCountryId(value);
                   window.sessionStorage.setItem("destinationCountryId", value);
-                  setRecipient(undefined);
-                  setReasonForSending("");
-                  setProviderName("");
-                  window.sessionStorage.removeItem("createdRecipient");
-                  window.sessionStorage.removeItem("reasonForSending");
-                  window.sessionStorage.removeItem("providerName");
+                  clearSelectedRecipientDetails();
                   clearTransactionDetails();
                 }}
                 onSendAmountChange={handleSendAmountChange}
               />
 
-              <RecipientForm
-                key={`recipient-${flowKey}`}
-                authToken={authSession?.token}
-                destinationCountry={selectedDestinationCountry}
-                onCreated={handleRecipientCreated}
-              />
+              <section className="panel stack">
+                <div className="row">
+                  <span className="step-number">2</span>
+                  <div>
+                    <h2>Recipient details</h2>
+                    <p className="muted small">
+                      Use a saved recipient or add someone new.
+                    </p>
+                  </div>
+                </div>
+
+                <SavedRecipientSelector
+                  key={`saved-recipient-${flowKey}`}
+                  authToken={authSession?.token}
+                  destinationCountry={selectedDestinationCountry}
+                  loadingRecipients={loadingRecipients}
+                  recipients={savedRecipients}
+                  onSelected={prepareRecipientReview}
+                />
+
+                <div className="recipient-divider">
+                  <span>or add a new recipient</span>
+                </div>
+
+                <RecipientForm
+                  key={`recipient-${flowKey}`}
+                  authToken={authSession?.token}
+                  destinationCountry={selectedDestinationCountry}
+                  showHeading={false}
+                  onCreated={handleRecipientCreated}
+                />
+              </section>
 
               <TransferConfirmation
                 key={`confirm-${flowKey}`}

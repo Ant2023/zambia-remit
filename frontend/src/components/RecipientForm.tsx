@@ -3,23 +3,15 @@
 import { FormEvent, useState } from "react";
 import type { Country, Recipient, RecipientPayload } from "@/lib/api";
 import { createRecipient, formatApiError } from "@/lib/api";
-
-type PayoutMethod = "mobile_money" | "bank_deposit";
-
-const REASON_OPTIONS = [
-  "Family support",
-  "Education",
-  "Medical expenses",
-  "Rent or housing",
-  "Bills and utilities",
-  "Gift",
-  "Business support",
-  "Savings",
-];
+import {
+  type PayoutMethod,
+  REASON_OPTIONS,
+} from "@/lib/transfer-options";
 
 type RecipientFormProps = {
   authToken?: string;
   destinationCountry?: Country;
+  showHeading?: boolean;
   onCreated: (
     recipient: Recipient,
     payoutMethod: PayoutMethod,
@@ -31,6 +23,7 @@ type RecipientFormProps = {
 export function RecipientForm({
   authToken,
   destinationCountry,
+  showHeading = true,
   onCreated,
 }: RecipientFormProps) {
   const [payoutMethod, setPayoutMethod] = useState<PayoutMethod>("mobile_money");
@@ -95,14 +88,16 @@ export function RecipientForm({
   }
 
   return (
-    <section className="panel stack">
-      <div className="row">
-        <span className="step-number">2</span>
-        <div>
-          <h2>Recipient details</h2>
-          <p className="muted small">Enter who will receive the money.</p>
+    <section className="new-recipient-form stack">
+      {showHeading ? (
+        <div className="row">
+          <span className="step-number">2</span>
+          <div>
+            <h2>Recipient details</h2>
+            <p className="muted small">Enter who will receive the money.</p>
+          </div>
         </div>
-      </div>
+      ) : null}
 
       <form className="stack" onSubmit={handleSubmit}>
         <div className="form-grid">

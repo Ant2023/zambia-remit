@@ -124,6 +124,12 @@ export default function LoginPage() {
               />
             </label>
 
+            {mode === "login" ? (
+              <Link className="text-link small" href="/forgot-password">
+                Forgot your password?
+              </Link>
+            ) : null}
+
             {mode === "register" ? (
               <label>
                 Confirm password
@@ -153,7 +159,8 @@ export default function LoginPage() {
           </form>
 
           <p className="auth-note">
-            Staff and admin accounts should use Django admin.
+            Staff and admin accounts can use the{" "}
+            <Link href="/operations">operations console</Link>.
           </p>
         </div>
 

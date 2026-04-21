@@ -3,6 +3,7 @@ export type User = {
   email: string;
   first_name: string;
   last_name: string;
+  is_staff: boolean;
   date_joined: string;
 };
 
@@ -20,6 +21,23 @@ export type CustomerRegistrationPayload = {
   email: string;
   password: string;
   password_confirm: string;
+  first_name?: string;
+  last_name?: string;
+};
+
+export type PasswordResetRequestPayload = {
+  email: string;
+};
+
+export type PasswordResetConfirmPayload = {
+  uid: string;
+  token: string;
+  password: string;
+  password_confirm: string;
+};
+
+export type UserUpdatePayload = {
+  email?: string;
   first_name?: string;
   last_name?: string;
 };
@@ -56,6 +74,10 @@ export type SenderProfile = {
   region: string;
   postal_code: string;
   kyc_status: string;
+  kyc_status_display: string;
+  kyc_submitted_at: string | null;
+  kyc_reviewed_at: string | null;
+  kyc_review_note: string;
   is_complete: boolean;
   created_at: string;
   updated_at: string;
@@ -66,6 +88,12 @@ export type SenderProfilePayload = {
   last_name: string;
   phone_number: string;
   country_id: string;
+  date_of_birth?: string | null;
+  address_line_1?: string;
+  address_line_2?: string;
+  city?: string;
+  region?: string;
+  postal_code?: string;
 };
 
 export type Corridor = {
@@ -101,6 +129,12 @@ export type Recipient = {
   phone_number: string;
   country: Country;
   relationship_to_sender: string;
+  verification_status: string;
+  verification_status_display: string;
+  verification_submitted_at: string | null;
+  verification_reviewed_at: string | null;
+  verification_review_note: string;
+  is_verification_ready: boolean;
   mobile_money_accounts: Array<{
     id: string;
     provider_name: string;
@@ -144,10 +178,15 @@ export type Transfer = {
   reference: string;
   quote: string;
   recipient: string;
+  recipient_details: Recipient;
   source_country: string;
+  source_country_details: Country;
   destination_country: string;
+  destination_country_details: Country;
   source_currency: string;
+  source_currency_details: Currency;
   destination_currency: string;
+  destination_currency_details: Currency;
   payout_method: "mobile_money" | "bank_deposit";
   send_amount: string;
   fee_amount: string;
@@ -162,6 +201,9 @@ export type Transfer = {
   payout_status: string;
   payout_status_display: string;
   reason_for_transfer: string;
+  sender_email: string;
+  sender_name: string;
+  latest_payment_instruction: PaymentInstruction | null;
   status_events: Array<{
     id: string;
     from_status: string;
@@ -175,7 +217,141 @@ export type Transfer = {
   updated_at: string;
 };
 
+export type ComplianceFlag = {
+  id: string;
+  category: string;
+  category_display: string;
+  severity: string;
+  severity_display: string;
+  status: string;
+  status_display: string;
+  code: string;
+  title: string;
+  description: string;
+  metadata: Record<string, unknown>;
+  created_by_email: string;
+  resolved_by_email: string;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ComplianceEvent = {
+  id: string;
+  action: string;
+  action_display: string;
+  from_compliance_status: string;
+  from_compliance_status_display: string;
+  to_compliance_status: string;
+  to_compliance_status_display: string;
+  from_transfer_status: string;
+  from_transfer_status_display: string;
+  to_transfer_status: string;
+  to_transfer_status_display: string;
+  note: string;
+  metadata: Record<string, unknown>;
+  performed_by_email: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SanctionsCheck = {
+  id: string;
+  party_type: string;
+  party_type_display: string;
+  status: string;
+  status_display: string;
+  screened_name: string;
+  provider_name: string;
+  provider_reference: string;
+  screening_payload: Record<string, unknown>;
+  response_payload: Record<string, unknown>;
+  match_score: string | null;
+  reviewed_by_email: string;
+  reviewed_at: string | null;
+  review_note: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AllowedTransferStatus = {
+  status: string;
+  label: string;
+};
+
+export type OperationalTransfer = Transfer & {
+  allowed_next_statuses: AllowedTransferStatus[];
+  compliance_flags: ComplianceFlag[];
+  compliance_events: ComplianceEvent[];
+  sanctions_checks: SanctionsCheck[];
+};
+
 export type MockPaymentMethod = "debit_card" | "bank_transfer";
+
+export type PaymentInstructionDetails = {
+  title?: string;
+  summary?: string;
+  steps?: string[];
+  test_card?: string;
+  processor_code?: string;
+  processor_display_name?: string;
+  integration_mode?: string;
+  next_action?: string;
+  session_reference?: string;
+  bank_name?: string;
+  account_name?: string;
+  account_number?: string;
+  routing_number?: string;
+  amount_label?: string;
+  reference?: string;
+  card_fields?: Array<{
+    name: string;
+    label: string;
+  }>;
+  test_cards?: Array<{
+    number: string;
+    outcome: string;
+    description?: string;
+  }>;
+  authorization_cardholder_name?: string;
+  authorization_masked_card?: string;
+  authorization_expiry_month?: number;
+  authorization_expiry_year?: number;
+  authorization_reference?: string;
+  last_authorization_status?: string;
+  last_authorization_message?: string;
+};
+
+export type PaymentInstruction = {
+  id: string;
+  transfer: string;
+  payment_method: MockPaymentMethod;
+  payment_method_display: string;
+  provider_name: string;
+  provider_reference: string;
+  amount: string;
+  currency: Currency;
+  status: string;
+  status_display: string;
+  status_reason: string;
+  instructions: PaymentInstructionDetails;
+  expires_at: string | null;
+  authorized_at: string | null;
+  completed_at: string | null;
+  failed_at: string | null;
+  reversed_at: string | null;
+  refunded_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CardPaymentAuthorizationPayload = {
+  cardholder_name: string;
+  card_number: string;
+  expiry_month: number;
+  expiry_year: number;
+  cvv: string;
+};
 
 export type RecipientPayload = {
   first_name: string;
@@ -213,6 +389,7 @@ export type TransferPayload = {
 
 export type MockFundingPayload = {
   payment_method: MockPaymentMethod;
+  payment_instruction_id?: string | null;
   note?: string;
 };
 
@@ -277,6 +454,27 @@ export function loginCustomer(payload: CustomerLoginPayload) {
   });
 }
 
+export function loginStaff(payload: CustomerLoginPayload) {
+  return apiFetch<AuthSession>("/accounts/staff-login", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function requestPasswordReset(payload: PasswordResetRequestPayload) {
+  return apiFetch<{ detail: string }>("/accounts/password-reset", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function confirmPasswordReset(payload: PasswordResetConfirmPayload) {
+  return apiFetch<{ detail: string }>("/accounts/password-reset/confirm", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function logoutCustomer(token: string) {
   return apiFetch<void>(
     "/accounts/logout",
@@ -291,6 +489,17 @@ export function getCurrentUser(token: string) {
   return apiFetch<User>("/accounts/me", {}, token);
 }
 
+export function updateCurrentUser(payload: UserUpdatePayload, token: string) {
+  return apiFetch<User>(
+    "/accounts/me",
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
 export function getSenderProfile(token: string) {
   return apiFetch<SenderProfile>("/accounts/profile", {}, token);
 }
@@ -301,6 +510,16 @@ export function updateSenderProfile(payload: SenderProfilePayload, token: string
     {
       method: "PATCH",
       body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function submitSenderKyc(token: string) {
+  return apiFetch<SenderProfile>(
+    "/accounts/profile/kyc-submit",
+    {
+      method: "POST",
     },
     token,
   );
@@ -351,6 +570,45 @@ export function createRecipient(payload: RecipientPayload, token: string) {
   );
 }
 
+export function getRecipients(token: string) {
+  return apiFetch<Recipient[]>("/recipients", {}, token);
+}
+
+export function updateRecipient(
+  id: string,
+  payload: Partial<RecipientPayload>,
+  token: string,
+) {
+  return apiFetch<Recipient>(
+    `/recipients/${id}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function submitRecipientVerification(id: string, token: string) {
+  return apiFetch<Recipient>(
+    `/recipients/${id}/verification-submit`,
+    {
+      method: "POST",
+    },
+    token,
+  );
+}
+
+export function deleteRecipient(id: string, token: string) {
+  return apiFetch<void>(
+    `/recipients/${id}`,
+    {
+      method: "DELETE",
+    },
+    token,
+  );
+}
+
 export function createQuote(payload: QuotePayload, token: string) {
   return apiFetch<Quote>(
     "/quotes",
@@ -379,6 +637,143 @@ export function getTransfers(token: string) {
 
 export function getTransfer(id: string, token: string) {
   return apiFetch<Transfer>(`/transfers/${id}`, {}, token);
+}
+
+export function getOperationalTransfers(
+  token: string,
+  params: {
+    status?: string;
+    funding_status?: string;
+    compliance_status?: string;
+    payout_status?: string;
+    q?: string;
+  } = {},
+) {
+  const searchParams = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) {
+      searchParams.set(key, value);
+    }
+  });
+
+  const queryString = searchParams.toString();
+  const path = queryString
+    ? `/transfers/operations?${queryString}`
+    : "/transfers/operations";
+
+  return apiFetch<OperationalTransfer[]>(path, {}, token);
+}
+
+export function transitionTransferStatus(
+  id: string,
+  payload: { status: string; note?: string },
+  token: string,
+) {
+  return apiFetch<OperationalTransfer>(
+    `/transfers/${id}/status`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function applyTransferComplianceAction(
+  id: string,
+  payload: { action: string; note?: string },
+  token: string,
+) {
+  return apiFetch<OperationalTransfer>(
+    `/transfers/${id}/compliance-actions`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function reviewTransferSanctionsCheck(
+  transferId: string,
+  checkId: string,
+  payload: {
+    status: string;
+    review_note?: string;
+    provider_reference?: string;
+    match_score?: string | null;
+  },
+  token: string,
+) {
+  return apiFetch<OperationalTransfer>(
+    `/transfers/${transferId}/sanctions-checks/${checkId}/review`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function reviewTransferAmlFlag(
+  transferId: string,
+  flagId: string,
+  payload: {
+    decision: string;
+    review_note?: string;
+    escalation_destination?: string;
+    escalation_reference?: string;
+  },
+  token: string,
+) {
+  return apiFetch<OperationalTransfer>(
+    `/transfers/${transferId}/aml-flags/${flagId}/review`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function getPaymentInstructions(id: string, token: string) {
+  return apiFetch<PaymentInstruction[]>(
+    `/transfers/${id}/payment-instructions`,
+    {},
+    token,
+  );
+}
+
+export function createPaymentInstruction(
+  id: string,
+  payload: { payment_method: MockPaymentMethod },
+  token: string,
+) {
+  return apiFetch<PaymentInstruction>(
+    `/transfers/${id}/payment-instructions`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function authorizeCardPaymentInstruction(
+  transferId: string,
+  instructionId: string,
+  payload: CardPaymentAuthorizationPayload,
+  token: string,
+) {
+  return apiFetch<PaymentInstruction>(
+    `/transfers/${transferId}/payment-instructions/${instructionId}/authorize`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
 }
 
 export function markTransferFunded(

@@ -31,7 +31,8 @@ export function AppNavbar() {
     router.push("/login?mode=login&next=/send");
   }
 
-  const startHref = authSession ? "/send?new=1" : "/start";
+  const isStaff = Boolean(authSession?.user.is_staff);
+  const startHref = isStaff ? "/operations" : authSession ? "/send?new=1" : "/start";
 
   return (
     <header className="premium-nav">
@@ -46,8 +47,17 @@ export function AppNavbar() {
 
         <nav className="premium-links" aria-label="Primary navigation">
           <Link href="/">Home</Link>
-          <Link href={startHref}>Send</Link>
-          <Link href="/history">History</Link>
+          {isStaff ? (
+            <Link href="/operations">Operations</Link>
+          ) : (
+            <>
+              <Link href="/dashboard">Dashboard</Link>
+              <Link href={startHref}>Send</Link>
+              <Link href="/recipients">Recipients</Link>
+              <Link href="/profile">Account</Link>
+              <Link href="/history">History</Link>
+            </>
+          )}
           <Link href="/history">Help</Link>
         </nav>
 
@@ -96,12 +106,29 @@ export function AppNavbar() {
           <Link href="/" onClick={() => setIsMobileMenuOpen(false)}>
             Home
           </Link>
-          <Link href={startHref} onClick={() => setIsMobileMenuOpen(false)}>
-            Send
-          </Link>
-          <Link href="/history" onClick={() => setIsMobileMenuOpen(false)}>
-            History
-          </Link>
+          {isStaff ? (
+            <Link href="/operations" onClick={() => setIsMobileMenuOpen(false)}>
+              Operations
+            </Link>
+          ) : (
+            <>
+              <Link href="/dashboard" onClick={() => setIsMobileMenuOpen(false)}>
+                Dashboard
+              </Link>
+              <Link href={startHref} onClick={() => setIsMobileMenuOpen(false)}>
+                Send
+              </Link>
+              <Link href="/recipients" onClick={() => setIsMobileMenuOpen(false)}>
+                Recipients
+              </Link>
+              <Link href="/profile" onClick={() => setIsMobileMenuOpen(false)}>
+                Account
+              </Link>
+              <Link href="/history" onClick={() => setIsMobileMenuOpen(false)}>
+                History
+              </Link>
+            </>
+          )}
           <Link href="/history" onClick={() => setIsMobileMenuOpen(false)}>
             Help
           </Link>

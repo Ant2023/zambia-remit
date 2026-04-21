@@ -2,12 +2,15 @@ from decimal import Decimal
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
+from django.utils import timezone
 
 from apps.countries.models import Country, CountryCorridor, Currency
+from apps.quotes.models import ExchangeRate, FeeRule
+from common.choices import PayoutMethod
 
 
 class Command(BaseCommand):
-    help = "Seed core currencies, countries, and Zambia payout corridors."
+    help = "Seed core currencies, countries, corridors, rates, and fee rules."
 
     CURRENCIES = [
         {"code": "USD", "name": "US Dollar", "minor_unit": 2},
@@ -57,26 +60,42 @@ class Command(BaseCommand):
             "destination_iso_code": "ZM",
             "min_send_amount": Decimal("10.00"),
             "max_send_amount": Decimal("5000.00"),
+            "exchange_rate": Decimal("25.50000000"),
         },
         {
             "source_iso_code": "GB",
             "destination_iso_code": "ZM",
             "min_send_amount": Decimal("10.00"),
             "max_send_amount": Decimal("5000.00"),
+            "exchange_rate": Decimal("32.25000000"),
         },
         {
             "source_iso_code": "DE",
             "destination_iso_code": "ZM",
             "min_send_amount": Decimal("10.00"),
             "max_send_amount": Decimal("5000.00"),
+            "exchange_rate": Decimal("27.40000000"),
         },
     ]
+
+    PAYOUT_FEE_DEFAULTS = {
+        PayoutMethod.MOBILE_MONEY: {
+            "fixed_fee": Decimal("2.99"),
+            "percentage_fee": Decimal("1.50"),
+        },
+        PayoutMethod.BANK_DEPOSIT: {
+            "fixed_fee": Decimal("4.99"),
+            "percentage_fee": Decimal("1.00"),
+        },
+    }
 
     @transaction.atomic
     def handle(self, *args, **options):
         currencies = self.seed_currencies()
         countries = self.seed_countries(currencies)
-        self.seed_corridors(countries)
+        corridors = self.seed_corridors(countries)
+        self.seed_exchange_rates(corridors)
+        self.seed_fee_rules(corridors)
 
         self.stdout.write(self.style.SUCCESS("Core remittance seed data is ready."))
 
@@ -116,7 +135,12 @@ class Command(BaseCommand):
 
         return countries
 
-    def seed_corridors(self, countries: dict[str, Country]) -> None:
+    def seed_corridors(
+        self,
+        countries: dict[str, Country],
+    ) -> dict[tuple[str, str], tuple[CountryCorridor, Decimal]]:
+        corridors = {}
+
         for item in self.CORRIDORS:
             source_country = countries[item["source_iso_code"]]
             destination_country = countries[item["destination_iso_code"]]
@@ -132,4 +156,47 @@ class Command(BaseCommand):
                     "max_send_amount": item["max_send_amount"],
                 },
             )
+            corridors[
+                (source_country.iso_code, destination_country.iso_code)
+            ] = (corridor, item["exchange_rate"])
             self.stdout.write(f"Seeded corridor: {corridor}")
+
+        return corridors
+
+    def seed_exchange_rates(
+        self,
+        corridors: dict[tuple[str, str], tuple[CountryCorridor, Decimal]],
+    ) -> None:
+        now = timezone.now()
+
+        for corridor, exchange_rate in corridors.values():
+            rate, _ = ExchangeRate.objects.update_or_create(
+                corridor=corridor,
+                provider_name="seeded_mid_market",
+                is_active=True,
+                defaults={
+                    "rate": exchange_rate,
+                    "effective_at": now,
+                    "expires_at": None,
+                },
+            )
+            self.stdout.write(f"Seeded exchange rate: {rate}")
+
+    def seed_fee_rules(
+        self,
+        corridors: dict[tuple[str, str], tuple[CountryCorridor, Decimal]],
+    ) -> None:
+        for corridor, _exchange_rate in corridors.values():
+            for payout_method, defaults in self.PAYOUT_FEE_DEFAULTS.items():
+                fee_rule, _ = FeeRule.objects.update_or_create(
+                    corridor=corridor,
+                    payout_method=payout_method,
+                    min_amount=corridor.min_send_amount,
+                    max_amount=corridor.max_send_amount,
+                    defaults={
+                        "fixed_fee": defaults["fixed_fee"],
+                        "percentage_fee": defaults["percentage_fee"],
+                        "is_active": True,
+                    },
+                )
+                self.stdout.write(f"Seeded fee rule: {fee_rule}")

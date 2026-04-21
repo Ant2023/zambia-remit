@@ -40,6 +40,19 @@ class UserAdmin(DjangoUserAdmin):
 
 @admin.register(SenderProfile)
 class SenderProfileAdmin(admin.ModelAdmin):
-    list_display = ("user", "phone_number", "country", "kyc_status", "updated_at")
+    list_display = (
+        "user",
+        "phone_number",
+        "country",
+        "kyc_status",
+        "kyc_submitted_at",
+        "updated_at",
+    )
     list_filter = ("kyc_status", "country")
     search_fields = ("user__email", "phone_number")
+    readonly_fields = (
+        "created_at",
+        "updated_at",
+        "kyc_submitted_at",
+        "kyc_reviewed_at",
+    )

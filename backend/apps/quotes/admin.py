@@ -1,6 +1,25 @@
 from django.contrib import admin
 
-from .models import FeeRule, Quote
+from .models import ExchangeRate, FeeRule, Quote
+
+
+@admin.register(ExchangeRate)
+class ExchangeRateAdmin(admin.ModelAdmin):
+    list_display = (
+        "corridor",
+        "rate",
+        "provider_name",
+        "is_active",
+        "effective_at",
+        "expires_at",
+    )
+    list_filter = ("is_active", "provider_name", "corridor__destination_currency")
+    search_fields = (
+        "provider_name",
+        "corridor__source_country__name",
+        "corridor__destination_country__name",
+    )
+    readonly_fields = ("created_at", "updated_at")
 
 
 @admin.register(FeeRule)

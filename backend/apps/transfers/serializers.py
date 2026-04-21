@@ -2,26 +2,30 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
 
+from apps.countries.serializers import CountrySerializer, CurrencySerializer
 from apps.quotes.models import Quote
 from apps.recipients.models import Recipient
+from apps.recipients.serializers import RecipientSerializer
 from common.choices import PayoutMethod
 
-from .models import Transfer, TransferStatusEvent
+from .compliance import evaluate_transfer_compliance
+from .models import (
+    Transfer,
+    TransferComplianceEvent,
+    TransferComplianceFlag,
+    TransferPaymentInstruction,
+    TransferPaymentWebhookEvent,
+    TransferSanctionsCheck,
+    TransferStatusEvent,
+)
+from .services import get_allowed_status_transitions
 
 
 class MockFundingSerializer(serializers.Serializer):
-    class PaymentMethod:
-        DEBIT_CARD = "debit_card"
-        BANK_TRANSFER = "bank_transfer"
-
-        choices = (
-            (DEBIT_CARD, "Debit card"),
-            (BANK_TRANSFER, "Bank transfer"),
-        )
-
-        labels = dict(choices)
-
-    payment_method = serializers.ChoiceField(choices=PaymentMethod.choices)
+    payment_method = serializers.ChoiceField(
+        choices=TransferPaymentInstruction.PaymentMethod.choices,
+    )
+    payment_instruction_id = serializers.UUIDField(required=False, allow_null=True)
     note = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -55,6 +59,423 @@ class TransferStatusEventSerializer(serializers.ModelSerializer):
         return dict(Transfer.Status.choices).get(obj.to_status, obj.to_status)
 
 
+class TransferPaymentInstructionCreateSerializer(serializers.Serializer):
+    payment_method = serializers.ChoiceField(
+        choices=TransferPaymentInstruction.PaymentMethod.choices,
+    )
+
+
+class CardPaymentAuthorizationSerializer(serializers.Serializer):
+    cardholder_name = serializers.CharField(max_length=120)
+    card_number = serializers.CharField(max_length=24)
+    expiry_month = serializers.IntegerField(min_value=1, max_value=12)
+    expiry_year = serializers.IntegerField(min_value=2024, max_value=2100)
+    cvv = serializers.CharField(min_length=3, max_length=4)
+
+    def validate_cardholder_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Enter the cardholder name.")
+        return value
+
+    def validate_card_number(self, value):
+        digits_only = "".join(character for character in value if character.isdigit())
+        if len(digits_only) < 13 or len(digits_only) > 19:
+            raise serializers.ValidationError("Enter a valid card number.")
+        return digits_only
+
+    def validate_cvv(self, value):
+        digits_only = "".join(character for character in value if character.isdigit())
+        if len(digits_only) not in {3, 4}:
+            raise serializers.ValidationError("Enter a valid security code.")
+        return digits_only
+
+
+class PaymentWebhookEventCreateSerializer(serializers.Serializer):
+    event_id = serializers.CharField(max_length=120)
+    event_type = serializers.CharField(max_length=120)
+    provider_reference = serializers.CharField(max_length=64)
+    payment_status = serializers.ChoiceField(
+        choices=(
+            TransferPaymentInstruction.Status.AUTHORIZED,
+            TransferPaymentInstruction.Status.PAID,
+            TransferPaymentInstruction.Status.FAILED,
+            TransferPaymentInstruction.Status.CANCELLED,
+            TransferPaymentInstruction.Status.REQUIRES_REVIEW,
+            TransferPaymentInstruction.Status.EXPIRED,
+            TransferPaymentInstruction.Status.REVERSED,
+            TransferPaymentInstruction.Status.REFUNDED,
+        ),
+    )
+    status_reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=500,
+    )
+    amount = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+    )
+    currency_code = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=8,
+    )
+    event_created_at = serializers.DateTimeField(required=False, allow_null=True)
+    metadata = serializers.JSONField(required=False)
+
+    def validate(self, attrs):
+        attrs["event_id"] = attrs["event_id"].strip()
+        attrs["event_type"] = attrs["event_type"].strip()
+        attrs["provider_reference"] = attrs["provider_reference"].strip()
+        attrs["status_reason"] = attrs.get("status_reason", "").strip()
+        attrs["currency_code"] = attrs.get("currency_code", "").strip().upper()
+        attrs["metadata"] = attrs.get("metadata") or {}
+
+        if not attrs["event_id"]:
+            raise serializers.ValidationError({"event_id": "Event id is required."})
+        if not attrs["event_type"]:
+            raise serializers.ValidationError(
+                {"event_type": "Event type is required."},
+            )
+        if not attrs["provider_reference"]:
+            raise serializers.ValidationError(
+                {"provider_reference": "Provider reference is required."},
+            )
+
+        return attrs
+
+
+class PaymentWebhookEventSerializer(serializers.ModelSerializer):
+    payment_instruction_id = serializers.UUIDField(read_only=True)
+    processing_status_display = serializers.CharField(
+        source="get_processing_status_display",
+        read_only=True,
+    )
+
+    class Meta:
+        model = TransferPaymentWebhookEvent
+        fields = (
+            "id",
+            "payment_instruction_id",
+            "provider_name",
+            "provider_event_id",
+            "event_type",
+            "provider_reference",
+            "payload",
+            "processing_status",
+            "processing_status_display",
+            "processing_message",
+            "resulting_payment_status",
+            "event_created_at",
+            "processed_at",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+
+class TransferPaymentInstructionSerializer(serializers.ModelSerializer):
+    payment_method_display = serializers.CharField(
+        source="get_payment_method_display",
+        read_only=True,
+    )
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    currency = CurrencySerializer(read_only=True)
+
+    class Meta:
+        model = TransferPaymentInstruction
+        fields = (
+            "id",
+            "transfer",
+            "payment_method",
+            "payment_method_display",
+            "provider_name",
+            "provider_reference",
+            "amount",
+            "currency",
+            "status",
+            "status_display",
+            "status_reason",
+            "instructions",
+            "expires_at",
+            "authorized_at",
+            "completed_at",
+            "failed_at",
+            "reversed_at",
+            "refunded_at",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+
+class TransferComplianceFlagSerializer(serializers.ModelSerializer):
+    category_display = serializers.CharField(
+        source="get_category_display",
+        read_only=True,
+    )
+    severity_display = serializers.CharField(
+        source="get_severity_display",
+        read_only=True,
+    )
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    created_by_email = serializers.EmailField(source="created_by.email", read_only=True)
+    resolved_by_email = serializers.EmailField(source="resolved_by.email", read_only=True)
+
+    class Meta:
+        model = TransferComplianceFlag
+        fields = (
+            "id",
+            "category",
+            "category_display",
+            "severity",
+            "severity_display",
+            "status",
+            "status_display",
+            "code",
+            "title",
+            "description",
+            "metadata",
+            "created_by_email",
+            "resolved_by_email",
+            "resolved_at",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+
+class TransferComplianceEventSerializer(serializers.ModelSerializer):
+    action_display = serializers.CharField(source="get_action_display", read_only=True)
+    performed_by_email = serializers.EmailField(
+        source="performed_by.email",
+        read_only=True,
+    )
+    from_compliance_status_display = serializers.SerializerMethodField()
+    to_compliance_status_display = serializers.SerializerMethodField()
+    from_transfer_status_display = serializers.SerializerMethodField()
+    to_transfer_status_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TransferComplianceEvent
+        fields = (
+            "id",
+            "action",
+            "action_display",
+            "from_compliance_status",
+            "from_compliance_status_display",
+            "to_compliance_status",
+            "to_compliance_status_display",
+            "from_transfer_status",
+            "from_transfer_status_display",
+            "to_transfer_status",
+            "to_transfer_status_display",
+            "note",
+            "metadata",
+            "performed_by_email",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+    def get_from_compliance_status_display(self, obj):
+        if not obj.from_compliance_status:
+            return ""
+        return dict(Transfer.ComplianceStatus.choices).get(
+            obj.from_compliance_status,
+            obj.from_compliance_status,
+        )
+
+    def get_to_compliance_status_display(self, obj):
+        if not obj.to_compliance_status:
+            return ""
+        return dict(Transfer.ComplianceStatus.choices).get(
+            obj.to_compliance_status,
+            obj.to_compliance_status,
+        )
+
+    def get_from_transfer_status_display(self, obj):
+        if not obj.from_transfer_status:
+            return ""
+        return dict(Transfer.Status.choices).get(
+            obj.from_transfer_status,
+            obj.from_transfer_status,
+        )
+
+    def get_to_transfer_status_display(self, obj):
+        if not obj.to_transfer_status:
+            return ""
+        return dict(Transfer.Status.choices).get(
+            obj.to_transfer_status,
+            obj.to_transfer_status,
+        )
+
+
+class TransferSanctionsCheckSerializer(serializers.ModelSerializer):
+    party_type_display = serializers.CharField(
+        source="get_party_type_display",
+        read_only=True,
+    )
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    reviewed_by_email = serializers.EmailField(source="reviewed_by.email", read_only=True)
+
+    class Meta:
+        model = TransferSanctionsCheck
+        fields = (
+            "id",
+            "party_type",
+            "party_type_display",
+            "status",
+            "status_display",
+            "screened_name",
+            "provider_name",
+            "provider_reference",
+            "screening_payload",
+            "response_payload",
+            "match_score",
+            "reviewed_by_email",
+            "reviewed_at",
+            "review_note",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+
+class TransferStatusTransitionSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=Transfer.Status.choices)
+    note = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
+
+class TransferSanctionsCheckReviewSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=(
+            TransferSanctionsCheck.Status.CLEAR,
+            TransferSanctionsCheck.Status.POSSIBLE_MATCH,
+            TransferSanctionsCheck.Status.CONFIRMED_MATCH,
+            TransferSanctionsCheck.Status.ERROR,
+            TransferSanctionsCheck.Status.SKIPPED,
+        ),
+    )
+    review_note = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=1000,
+    )
+    provider_reference = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=120,
+    )
+    match_score = serializers.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+    )
+
+    def validate(self, attrs):
+        status = attrs["status"]
+        note = attrs.get("review_note", "").strip()
+
+        if status in {
+            TransferSanctionsCheck.Status.POSSIBLE_MATCH,
+            TransferSanctionsCheck.Status.CONFIRMED_MATCH,
+            TransferSanctionsCheck.Status.ERROR,
+        } and not note:
+            raise serializers.ValidationError(
+                {"review_note": "Add a note for matched or failed screenings."},
+            )
+
+        attrs["review_note"] = note
+        return attrs
+
+
+class TransferComplianceActionSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(
+        choices=(
+            TransferComplianceEvent.Action.NOTE,
+            TransferComplianceEvent.Action.HOLD,
+            TransferComplianceEvent.Action.REVIEW,
+            TransferComplianceEvent.Action.APPROVE,
+            TransferComplianceEvent.Action.REJECT,
+        ),
+    )
+    note = serializers.CharField(required=False, allow_blank=True, max_length=1000)
+
+    def validate(self, attrs):
+        action = attrs["action"]
+        note = attrs.get("note", "").strip()
+
+        if action in {
+            TransferComplianceEvent.Action.NOTE,
+            TransferComplianceEvent.Action.HOLD,
+            TransferComplianceEvent.Action.REJECT,
+        } and not note:
+            raise serializers.ValidationError(
+                {"note": "Add a note for this compliance action."},
+            )
+
+        attrs["note"] = note
+        return attrs
+
+
+class TransferAmlFlagReviewSerializer(serializers.Serializer):
+    decision = serializers.ChoiceField(
+        choices=(
+            "acknowledge",
+            "review",
+            "escalate",
+            "clear",
+            "dismiss",
+            "report",
+        ),
+    )
+    review_note = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=1000,
+    )
+    escalation_destination = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=120,
+    )
+    escalation_reference = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=120,
+    )
+
+    def validate(self, attrs):
+        decision = attrs["decision"]
+        review_note = attrs.get("review_note", "").strip()
+        escalation_destination = attrs.get("escalation_destination", "").strip()
+        escalation_reference = attrs.get("escalation_reference", "").strip()
+
+        if decision in {"review", "escalate", "dismiss", "report"} and not review_note:
+            raise serializers.ValidationError(
+                {"review_note": "Add a note for this AML action."},
+            )
+
+        if decision in {"escalate", "report"} and not escalation_destination:
+            raise serializers.ValidationError(
+                {
+                    "escalation_destination": (
+                        "Choose where this AML alert is being escalated."
+                    ),
+                },
+            )
+
+        attrs["review_note"] = review_note
+        attrs["escalation_destination"] = escalation_destination
+        attrs["escalation_reference"] = escalation_reference
+        return attrs
+
+
 class TransferSerializer(serializers.ModelSerializer):
     quote_id = serializers.UUIDField(write_only=True)
     recipient_id = serializers.UUIDField(write_only=True)
@@ -72,6 +493,20 @@ class TransferSerializer(serializers.ModelSerializer):
         read_only=True,
     )
     status_events = TransferStatusEventSerializer(many=True, read_only=True)
+    latest_payment_instruction = serializers.SerializerMethodField()
+    sender_email = serializers.EmailField(source="sender.email", read_only=True)
+    sender_name = serializers.SerializerMethodField()
+    recipient_details = RecipientSerializer(source="recipient", read_only=True)
+    source_country_details = CountrySerializer(source="source_country", read_only=True)
+    destination_country_details = CountrySerializer(
+        source="destination_country",
+        read_only=True,
+    )
+    source_currency_details = CurrencySerializer(source="source_currency", read_only=True)
+    destination_currency_details = CurrencySerializer(
+        source="destination_currency",
+        read_only=True,
+    )
 
     class Meta:
         model = Transfer
@@ -83,9 +518,13 @@ class TransferSerializer(serializers.ModelSerializer):
             "recipient",
             "recipient_id",
             "source_country",
+            "source_country_details",
             "destination_country",
+            "destination_country_details",
             "source_currency",
+            "source_currency_details",
             "destination_currency",
+            "destination_currency_details",
             "payout_method",
             "send_amount",
             "fee_amount",
@@ -100,7 +539,11 @@ class TransferSerializer(serializers.ModelSerializer):
             "payout_status",
             "payout_status_display",
             "reason_for_transfer",
+            "sender_email",
+            "sender_name",
+            "recipient_details",
             "status_events",
+            "latest_payment_instruction",
             "created_at",
             "updated_at",
         )
@@ -110,9 +553,13 @@ class TransferSerializer(serializers.ModelSerializer):
             "quote",
             "recipient",
             "source_country",
+            "source_country_details",
             "destination_country",
+            "destination_country_details",
             "source_currency",
+            "source_currency_details",
             "destination_currency",
+            "destination_currency_details",
             "payout_method",
             "send_amount",
             "fee_amount",
@@ -126,10 +573,24 @@ class TransferSerializer(serializers.ModelSerializer):
             "compliance_status_display",
             "payout_status",
             "payout_status_display",
+            "sender_email",
+            "sender_name",
+            "recipient_details",
             "status_events",
+            "latest_payment_instruction",
             "created_at",
             "updated_at",
         )
+
+    def get_latest_payment_instruction(self, obj):
+        instruction = obj.payment_instructions.first()
+        if not instruction:
+            return None
+        return TransferPaymentInstructionSerializer(instruction).data
+
+    def get_sender_name(self, obj):
+        name = f"{obj.sender.first_name} {obj.sender.last_name}".strip()
+        return name or obj.sender.email
 
     def validate(self, attrs):
         request = self.context["request"]
@@ -219,6 +680,7 @@ class TransferSerializer(serializers.ModelSerializer):
             receive_amount=quote.receive_amount,
             reason_for_transfer=validated_data.get("reason_for_transfer", ""),
         )
+        evaluate_transfer_compliance(transfer, changed_by=request.user)
         TransferStatusEvent.objects.create(
             transfer=transfer,
             from_status="",
@@ -229,3 +691,27 @@ class TransferSerializer(serializers.ModelSerializer):
         quote.status = Quote.Status.USED
         quote.save(update_fields=("status", "updated_at"))
         return transfer
+
+
+class StaffTransferSerializer(TransferSerializer):
+    allowed_next_statuses = serializers.SerializerMethodField()
+    compliance_flags = TransferComplianceFlagSerializer(many=True, read_only=True)
+    compliance_events = TransferComplianceEventSerializer(many=True, read_only=True)
+    sanctions_checks = TransferSanctionsCheckSerializer(many=True, read_only=True)
+
+    class Meta(TransferSerializer.Meta):
+        fields = TransferSerializer.Meta.fields + (
+            "allowed_next_statuses",
+            "compliance_flags",
+            "compliance_events",
+            "sanctions_checks",
+        )
+        read_only_fields = TransferSerializer.Meta.read_only_fields + (
+            "allowed_next_statuses",
+            "compliance_flags",
+            "compliance_events",
+            "sanctions_checks",
+        )
+
+    def get_allowed_next_statuses(self, obj):
+        return get_allowed_status_transitions(obj)

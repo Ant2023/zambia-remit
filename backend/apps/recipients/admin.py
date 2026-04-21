@@ -5,10 +5,22 @@ from .models import Recipient, RecipientBankAccount, RecipientMobileMoneyAccount
 
 @admin.register(Recipient)
 class RecipientAdmin(admin.ModelAdmin):
-    list_display = ("full_name", "sender", "country", "phone_number", "updated_at")
-    list_filter = ("country",)
+    list_display = (
+        "full_name",
+        "sender",
+        "country",
+        "phone_number",
+        "verification_status",
+        "updated_at",
+    )
+    list_filter = ("country", "verification_status")
     search_fields = ("first_name", "last_name", "phone_number", "sender__email")
-    readonly_fields = ("created_at", "updated_at")
+    readonly_fields = (
+        "created_at",
+        "updated_at",
+        "verification_submitted_at",
+        "verification_reviewed_at",
+    )
 
 
 @admin.register(RecipientMobileMoneyAccount)
