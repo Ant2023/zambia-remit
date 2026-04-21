@@ -12,6 +12,13 @@ from .models import (
     TransferPayoutAttempt,
     TransferStatusEvent,
 )
+from .notifications import (
+    PAYMENT_FAILURE_STATUSES,
+    TRANSFER_FAILURE_STATUSES,
+    notify_for_compliance_event,
+    notify_payment_received,
+    notify_transaction_failed,
+)
 from .payouts import (
     apply_payout_attempt_status,
     get_latest_payout_attempt,
@@ -159,8 +166,8 @@ def record_compliance_event(
     previous_transfer_status: str = "",
     previous_compliance_status: str = "",
     metadata: dict | None = None,
-) -> None:
-    TransferComplianceEvent.objects.create(
+) -> TransferComplianceEvent:
+    event = TransferComplianceEvent.objects.create(
         transfer=transfer,
         action=action,
         from_transfer_status=previous_transfer_status,
@@ -171,6 +178,8 @@ def record_compliance_event(
         metadata=metadata or {},
         performed_by=changed_by,
     )
+    notify_for_compliance_event(event)
+    return event
 
 
 def update_manual_flag_statuses(
@@ -298,13 +307,29 @@ def apply_payment_instruction_status(
 
     transfer.save(update_fields=("status", "funding_status", "updated_at"))
 
+    status_event = None
     if transfer.status != previous_transfer_status:
-        TransferStatusEvent.objects.create(
+        status_event = TransferStatusEvent.objects.create(
             transfer=transfer,
             from_status=previous_transfer_status,
             to_status=transfer.status,
             changed_by=changed_by,
             note=note or f"Payment marked {instruction.get_status_display().lower()}.",
+        )
+
+    if not is_same_status and target_status == TransferPaymentInstruction.Status.PAID:
+        notify_payment_received(
+            transfer,
+            instruction=instruction,
+            status_event=status_event,
+            note=status_reason or note,
+        )
+    elif not is_same_status and target_status in PAYMENT_FAILURE_STATUSES:
+        notify_transaction_failed(
+            transfer,
+            trigger=instruction,
+            reason=status_reason or note,
+            status_value=target_status,
         )
 
     return transfer
@@ -609,7 +634,7 @@ def transition_transfer_status(
             "updated_at",
         ),
     )
-    TransferStatusEvent.objects.create(
+    status_event = TransferStatusEvent.objects.create(
         transfer=transfer,
         from_status=previous_status,
         to_status=target_status,
@@ -632,5 +657,12 @@ def transition_transfer_status(
             note=note,
             previous_transfer_status=previous_status,
             previous_compliance_status=previous_compliance_status,
+        )
+    if target_status in TRANSFER_FAILURE_STATUSES:
+        notify_transaction_failed(
+            transfer,
+            trigger=status_event,
+            reason=note,
+            status_value=target_status,
         )
     return transfer

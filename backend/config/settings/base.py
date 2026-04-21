@@ -137,6 +137,17 @@ STATIC_ROOT = ROOT_DIR / "staticfiles"
 MEDIA_URL = "media/"
 MEDIA_ROOT = ROOT_DIR / "media"
 
+EMAIL_BACKEND = env(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.smtp.EmailBackend",
+)
+EMAIL_HOST = env("EMAIL_HOST", "localhost")
+EMAIL_PORT = env_int("EMAIL_PORT", 25)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", False)
+EMAIL_USE_SSL = env_bool("EMAIL_USE_SSL", False)
+EMAIL_TIMEOUT = env_int("EMAIL_TIMEOUT", 10)
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", "support@mbongopay.local")
 FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", "http://localhost:3000").rstrip("/")
 CARD_PAYMENT_PROCESSOR = env("CARD_PAYMENT_PROCESSOR", "mock_card_processor")

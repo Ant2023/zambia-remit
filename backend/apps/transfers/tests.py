@@ -2,6 +2,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
@@ -32,6 +33,7 @@ from .models import (
     TransferPaymentInstruction,
     TransferPaymentWebhookEvent,
     TransferPayoutAttempt,
+    TransferNotification,
     TransferRiskRule,
     TransferSanctionsCheck,
 )
@@ -41,6 +43,10 @@ from .services import apply_payment_instruction_status
 User = get_user_model()
 
 
+@override_settings(
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    FRONTEND_BASE_URL="https://app.example.com",
+)
 class CoreTransferProductTests(APITestCase):
     def setUp(self):
         self.usd = Currency.objects.create(code="USD", name="US Dollar")
@@ -247,6 +253,20 @@ class CoreTransferProductTests(APITestCase):
         self.assertTrue(
             transfer.status_events.filter(
                 to_status=Transfer.Status.FUNDING_RECEIVED,
+            ).exists(),
+        )
+        notification_types = set(
+            transfer.notifications.values_list("event_type", flat=True),
+        )
+        self.assertIn(
+            TransferNotification.EventType.PAYMENT_RECEIVED,
+            notification_types,
+        )
+        self.assertIn(TransferNotification.EventType.RECEIPT, notification_types)
+        self.assertTrue(
+            transfer.notifications.filter(
+                event_type=TransferNotification.EventType.PAYMENT_RECEIVED,
+                subject=f"Payment received for transfer {transfer.reference}",
             ).exists(),
         )
 
@@ -968,6 +988,12 @@ class CoreTransferProductTests(APITestCase):
             Transfer.FundingStatus.FAILED,
         )
         self.assertEqual(updated_transfer.status, Transfer.Status.AWAITING_FUNDING)
+        self.assertTrue(
+            updated_transfer.notifications.filter(
+                event_type=TransferNotification.EventType.TRANSACTION_FAILED,
+                trigger_id=str(instruction.id),
+            ).exists(),
+        )
 
     def test_staff_can_advance_status_through_payout_lifecycle(self):
         transfer = self.create_transfer(status_value=Transfer.Status.FUNDING_RECEIVED)
@@ -999,6 +1025,11 @@ class CoreTransferProductTests(APITestCase):
         self.assertEqual(
             transfer.status_events.filter(to_status=Transfer.Status.COMPLETED).count(),
             1,
+        )
+        self.assertTrue(
+            transfer.notifications.filter(
+                event_type=TransferNotification.EventType.PAYOUT_COMPLETE,
+            ).exists(),
         )
 
     def test_payout_failure_can_be_retried_with_new_attempt(self):
@@ -1037,6 +1068,11 @@ class CoreTransferProductTests(APITestCase):
         self.assertEqual(transfer.status, Transfer.Status.FAILED)
         self.assertEqual(transfer.payout_status, Transfer.PayoutStatus.FAILED)
         self.assertEqual(first_attempt.status, TransferPayoutAttempt.Status.FAILED)
+        self.assertTrue(
+            transfer.notifications.filter(
+                event_type=TransferNotification.EventType.TRANSACTION_FAILED,
+            ).exists(),
+        )
 
         retry_response = self.client.post(
             reverse(
@@ -1108,6 +1144,12 @@ class CoreTransferProductTests(APITestCase):
         self.assertEqual(transfer.payout_status, Transfer.PayoutStatus.PAID_OUT)
         self.assertEqual(
             attempt.events.filter(provider_event_id="payout-paid-1").count(),
+            1,
+        )
+        self.assertEqual(
+            transfer.notifications.filter(
+                event_type=TransferNotification.EventType.PAYOUT_COMPLETE,
+            ).count(),
             1,
         )
 
@@ -1238,6 +1280,18 @@ class CoreTransferProductTests(APITestCase):
         self.assertEqual(
             response.data["payout_provider_details"]["code"],
             "internal_mobile_money",
+        )
+        self.assertTrue(
+            transfer.notifications.filter(
+                event_type=TransferNotification.EventType.TRANSFER_CREATED,
+                recipient_email=self.sender.email,
+            ).exists(),
+        )
+        self.assertTrue(
+            transfer.notifications.filter(
+                event_type=TransferNotification.EventType.TRANSFER_CREATED,
+                subject=f"MbongoPay transfer {transfer.reference} created",
+            ).exists(),
         )
 
     def test_transfer_limit_rule_can_hold_transfer_on_creation(self):
@@ -1533,6 +1587,12 @@ class CoreTransferProductTests(APITestCase):
         self.assertEqual(
             flag.metadata["recipient_verification_status"],
             "not_started",
+        )
+        self.assertTrue(
+            transfer.notifications.filter(
+                event_type=TransferNotification.EventType.VERIFICATION_REQUIRED,
+                trigger_id=str(flag.id),
+            ).exists(),
         )
 
     def test_verified_recipient_can_pass_recipient_verification_rule(self):

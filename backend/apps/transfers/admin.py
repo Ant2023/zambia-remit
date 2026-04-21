@@ -13,6 +13,7 @@ from .models import (
     TransferPayoutAttempt,
     TransferPayoutEvent,
     TransferSanctionsCheck,
+    TransferNotification,
     RecipientVerificationRule,
     TransferRiskRule,
     TransferStatusEvent,
@@ -23,6 +24,22 @@ class TransferStatusEventInline(admin.TabularInline):
     model = TransferStatusEvent
     extra = 0
     readonly_fields = ("created_at", "updated_at")
+
+
+class TransferNotificationInline(admin.TabularInline):
+    model = TransferNotification
+    extra = 0
+    readonly_fields = ("created_at", "updated_at", "sent_at")
+    fields = (
+        "channel",
+        "event_type",
+        "status",
+        "recipient_email",
+        "subject",
+        "trigger_model",
+        "trigger_id",
+        "sent_at",
+    )
 
 
 class TransferPaymentInstructionInline(admin.TabularInline):
@@ -172,6 +189,7 @@ class TransferAdmin(admin.ModelAdmin):
         TransferPaymentActionInline,
         TransferPayoutAttemptInline,
         TransferPayoutEventInline,
+        TransferNotificationInline,
         TransferStatusEventInline,
     ]
 
@@ -445,3 +463,34 @@ class TransferStatusEventAdmin(admin.ModelAdmin):
     list_filter = ("to_status",)
     search_fields = ("transfer__reference", "changed_by__email")
     readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(TransferNotification)
+class TransferNotificationAdmin(admin.ModelAdmin):
+    list_display = (
+        "transfer",
+        "event_type",
+        "channel",
+        "status",
+        "recipient_email",
+        "sent_at",
+        "created_at",
+    )
+    list_filter = ("event_type", "channel", "status")
+    search_fields = (
+        "transfer__reference",
+        "recipient_email",
+        "subject",
+        "dedupe_key",
+    )
+    readonly_fields = (
+        "dedupe_key",
+        "trigger_model",
+        "trigger_id",
+        "metadata",
+        "attempts",
+        "sent_at",
+        "error",
+        "created_at",
+        "updated_at",
+    )

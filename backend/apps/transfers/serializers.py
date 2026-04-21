@@ -29,6 +29,7 @@ from .models import (
     TransferSanctionsCheck,
     TransferStatusEvent,
 )
+from .notifications import notify_transfer_created, notify_verification_required
 from .services import get_allowed_status_transitions
 
 
@@ -933,14 +934,16 @@ class TransferSerializer(serializers.ModelSerializer):
             receive_amount=quote.receive_amount,
             reason_for_transfer=validated_data.get("reason_for_transfer", ""),
         )
-        evaluate_transfer_compliance(transfer, changed_by=request.user)
-        TransferStatusEvent.objects.create(
+        compliance_flags = evaluate_transfer_compliance(transfer, changed_by=request.user)
+        status_event = TransferStatusEvent.objects.create(
             transfer=transfer,
             from_status="",
             to_status=transfer.status,
             changed_by=request.user,
             note="Transfer created.",
         )
+        notify_transfer_created(transfer, status_event=status_event)
+        notify_verification_required(transfer, flags=compliance_flags)
         quote.status = Quote.Status.USED
         quote.save(update_fields=("status", "updated_at"))
         return transfer

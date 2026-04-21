@@ -30,6 +30,7 @@ from .payment_processors import (
     prepare_payment_instruction,
 )
 from .payment_fraud import evaluate_payment_fraud_rules
+from .notifications import notify_payment_received
 from .serializers import (
     CardPaymentAuthorizationSerializer,
     TransferComplianceActionSerializer,
@@ -318,11 +319,16 @@ class TransferFundingView(generics.GenericAPIView):
             transfer.funding_status = Transfer.FundingStatus.RECEIVED
             transfer.save(update_fields=("status", "funding_status", "updated_at"))
 
-            TransferStatusEvent.objects.create(
+            status_event = TransferStatusEvent.objects.create(
                 transfer=transfer,
                 from_status=previous_status,
                 to_status=transfer.status,
                 changed_by=request.user,
+                note=event_note,
+            )
+            notify_payment_received(
+                transfer,
+                status_event=status_event,
                 note=event_note,
             )
 

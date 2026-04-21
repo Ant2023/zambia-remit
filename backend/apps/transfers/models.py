@@ -1208,3 +1208,57 @@ class TransferStatusEvent(BaseModel):
 
     def __str__(self) -> str:
         return f"{self.transfer.reference}: {self.from_status} -> {self.to_status}"
+
+
+class TransferNotification(BaseModel):
+    class Channel(models.TextChoices):
+        EMAIL = "email", "Email"
+        SMS = "sms", "SMS"
+
+    class EventType(models.TextChoices):
+        TRANSFER_CREATED = "transfer_created", "Transfer created"
+        PAYMENT_RECEIVED = "payment_received", "Payment received"
+        PAYOUT_COMPLETE = "payout_complete", "Payout complete"
+        TRANSACTION_FAILED = "transaction_failed", "Transaction failed"
+        VERIFICATION_REQUIRED = "verification_required", "Verification required"
+        RECEIPT = "receipt", "Receipt"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+        SKIPPED = "skipped", "Skipped"
+
+    transfer = models.ForeignKey(
+        Transfer,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+    )
+    channel = models.CharField(max_length=16, choices=Channel.choices)
+    event_type = models.CharField(max_length=40, choices=EventType.choices)
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    recipient_email = models.EmailField(blank=True)
+    subject = models.CharField(max_length=255)
+    body = models.TextField()
+    dedupe_key = models.CharField(max_length=220, unique=True)
+    trigger_model = models.CharField(max_length=120, blank=True)
+    trigger_id = models.CharField(max_length=80, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=("transfer", "event_type", "channel")),
+            models.Index(fields=("status", "created_at")),
+            models.Index(fields=("trigger_model", "trigger_id")),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.transfer.reference} {self.channel} {self.event_type}"

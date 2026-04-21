@@ -12,6 +12,11 @@ from .models import (
     TransferPayoutEvent,
     TransferStatusEvent,
 )
+from .notifications import (
+    PAYOUT_FAILURE_STATUSES,
+    notify_payout_complete,
+    notify_transaction_failed,
+)
 from .payout_providers import get_payout_processor
 
 
@@ -278,7 +283,7 @@ def apply_payout_attempt_status(
         target_status,
         TransferPayoutEvent.Action.STATUS_SYNC,
     )
-    record_payout_event(
+    payout_event = record_payout_event(
         transfer=transfer,
         payout_attempt=attempt,
         action=event_action,
@@ -293,6 +298,16 @@ def apply_payout_attempt_status(
             **(response_payload or {}),
         },
     )
+    if target_status != previous_status and payout_event:
+        if target_status == TransferPayoutAttempt.Status.PAID_OUT:
+            notify_payout_complete(attempt, payout_event=payout_event)
+        elif target_status in PAYOUT_FAILURE_STATUSES:
+            notify_transaction_failed(
+                transfer,
+                trigger=payout_event,
+                reason=status_reason or note,
+                status_value=target_status,
+            )
     attempt.refresh_from_db()
     return attempt
 
