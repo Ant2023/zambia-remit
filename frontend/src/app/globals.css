@@ -25,6 +25,12 @@ html {
   scroll-behavior: smooth;
 }
 
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 button,
 input,
 select,
@@ -1210,6 +1216,7 @@ th {
 
 .mobile-menu-button {
   display: none;
+  flex: 0 0 auto;
   width: 42px;
   height: 42px;
   align-items: center;
@@ -1317,13 +1324,19 @@ th {
 
 .premium-brand {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 12px;
   color: #fff;
 }
 
+.premium-brand > span:last-child {
+  min-width: 0;
+}
+
 .brand-mark {
   display: inline-flex;
+  flex: 0 0 auto;
   width: 40px;
   height: 40px;
   align-items: center;
@@ -1342,10 +1355,13 @@ th {
 }
 
 .brand-name {
+  overflow: hidden;
   color: #fff;
   font-size: 1.08rem;
   font-weight: 800;
   letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .brand-subtitle {
@@ -1548,6 +1564,8 @@ th {
 }
 
 .transfer-card {
+  width: 100%;
+  min-width: 0;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 28px;
   background: rgba(255, 255, 255, 0.96);
@@ -1848,6 +1866,7 @@ th {
 }
 
 .preview-card {
+  width: min(440px, 100%);
   align-self: center;
   max-width: 440px;
   justify-self: end;
@@ -1880,6 +1899,7 @@ th {
 
 .rate-field-control {
   display: grid;
+  min-width: 0;
   min-height: 78px;
   grid-template-columns: minmax(0, 1fr) 136px;
   overflow: hidden;
@@ -2203,6 +2223,7 @@ th {
 
 .premium-send-main {
   width: min(1280px, 100%);
+  max-width: 100%;
   margin: 0 auto;
   padding: 48px 24px 56px;
 }
@@ -2217,6 +2238,7 @@ th {
 
 .premium-send-layout {
   display: grid;
+  min-width: 0;
   grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.8fr);
   gap: 24px;
   align-items: start;
@@ -2757,9 +2779,67 @@ th {
       linear-gradient(135deg, #020617 0%, #0f172a 48%, #022c22 100%);
   }
 
+  .auth-page {
+    min-height: calc(100svh - 72px);
+    place-items: start center;
+    padding: 22px 14px 36px;
+  }
+
+  .auth-shell {
+    width: 100%;
+    gap: 14px;
+  }
+
+  .auth-card {
+    gap: 14px;
+    border-radius: 20px;
+    padding: 22px;
+  }
+
+  .auth-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 14px;
+  }
+
+  .auth-card h1 {
+    font-size: 2rem;
+  }
+
+  .auth-copy {
+    font-size: 0.92rem;
+    line-height: 1.5;
+  }
+
+  .auth-tabs button {
+    min-width: 0;
+    padding: 10px 8px;
+  }
+
   .premium-nav-inner {
     align-items: center;
     flex-direction: row;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+
+  .premium-brand {
+    gap: 10px;
+  }
+
+  .brand-mark {
+    width: 36px;
+    height: 36px;
+    border-radius: 16px;
+  }
+
+  .brand-name {
+    font-size: 1rem;
+  }
+
+  .mobile-menu-button {
+    width: 40px;
+    height: 40px;
   }
 
   .brand-subtitle {
@@ -2768,8 +2848,56 @@ th {
 
   .premium-hero {
     gap: 34px;
-    padding-top: 56px;
-    padding-bottom: 72px;
+    padding: 36px 16px 64px;
+  }
+
+  .premium-send-main {
+    padding: 32px 16px 44px;
+  }
+
+  .send-intro {
+    margin-bottom: 20px;
+  }
+
+  .premium-send-layout {
+    gap: 18px;
+  }
+
+  .premium-home .lede {
+    font-size: 0.98rem;
+    line-height: 1.55;
+  }
+
+  .premium-mobile-menu {
+    padding: 12px 16px 14px;
+  }
+
+  .country-flag-track {
+    gap: 18px;
+  }
+
+  .country-flag-chip img {
+    width: 16px;
+    height: 16px;
+  }
+
+  .preview-card {
+    justify-self: stretch;
+    max-width: none;
+    scroll-margin-top: 112px;
+  }
+
+  .rate-check-stack {
+    gap: 11px;
+  }
+
+  .receive-method-field,
+  .rate-summary-list div {
+    gap: 8px;
+  }
+
+  .rate-message {
+    max-height: none;
   }
 
   .premium-hero .premium-pill {
