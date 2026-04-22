@@ -320,6 +320,81 @@ export type OperationalTransfer = Transfer & {
   payout_events: PayoutEvent[];
 };
 
+export type ReportCountBucket = {
+  value: string;
+  label: string;
+  count: number;
+};
+
+export type ReportMoneyBucket = {
+  currency: string;
+  count: number;
+  total: string;
+};
+
+export type ReportFunnelStep = {
+  label: string;
+  value: string;
+  count: number;
+  conversion_from_previous_percent: string;
+  conversion_from_start_percent: string;
+};
+
+export type OperationsReport = {
+  window: {
+    start_at: string;
+    end_at: string;
+    generated_at: string;
+  };
+  transaction_volume: {
+    created_count: number;
+    completed_count: number;
+    completion_rate_percent: string;
+    send_amount_by_currency: ReportMoneyBucket[];
+    receive_amount_by_currency: ReportMoneyBucket[];
+    by_status: ReportCountBucket[];
+    daily: Array<{
+      date: string;
+      currency: string;
+      transaction_count: number;
+      send_amount_total: string;
+      fee_amount_total: string;
+    }>;
+  };
+  revenue: {
+    fee_amount_by_currency: ReportMoneyBucket[];
+    total_fee_amount: string;
+    realized_fee_amount: string;
+    average_fee_amount: string;
+  };
+  failed_payment_rates: {
+    payment_instruction_count: number;
+    failed_count: number;
+    failed_rate_percent: string;
+    by_status: ReportCountBucket[];
+  };
+  failed_payout_rates: {
+    payout_attempt_count: number;
+    failed_count: number;
+    failed_rate_percent: string;
+    by_status: ReportCountBucket[];
+  };
+  kyc_completion: {
+    submitted_count: number;
+    verified_count: number;
+    completion_rate_percent: string;
+    status_counts: ReportCountBucket[];
+  };
+  funnel: ReportFunnelStep[];
+  admin_reports: {
+    active_transfer_count: number;
+    exception_transfer_count: number;
+    open_compliance_flag_count: number;
+    pending_notification_count: number;
+    notification_status_counts: ReportCountBucket[];
+  };
+};
+
 export type MockPaymentMethod = "credit_card" | "debit_card" | "bank_transfer";
 
 export type PaymentInstructionDetails = {
@@ -810,6 +885,29 @@ export function getOperationalTransfers(
     : "/transfers/operations";
 
   return apiFetch<OperationalTransfer[]>(path, {}, token);
+}
+
+export function getOperationsReport(
+  token: string,
+  params: {
+    start_date?: string;
+    end_date?: string;
+  } = {},
+) {
+  const searchParams = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) {
+      searchParams.set(key, value);
+    }
+  });
+
+  const queryString = searchParams.toString();
+  const path = queryString
+    ? `/transfers/operations/reports?${queryString}`
+    : "/transfers/operations/reports";
+
+  return apiFetch<OperationsReport>(path, {}, token);
 }
 
 export function transitionTransferStatus(

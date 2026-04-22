@@ -2,13 +2,20 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { AppNavbar } from "@/components/AppNavbar";
-import type { AuthSession, OperationalTransfer } from "@/lib/api";
+import type {
+  AuthSession,
+  OperationalTransfer,
+  OperationsReport,
+  ReportCountBucket,
+  ReportMoneyBucket,
+} from "@/lib/api";
 import {
   applyTransferComplianceAction,
   applyTransferPaymentAction,
   formatApiError,
   getCurrentUser,
   getOperationalTransfers,
+  getOperationsReport,
   loginStaff,
   retryTransferPayoutAttempt,
   reverseTransferPayoutAttempt,
@@ -103,6 +110,56 @@ function getStatusTone(status: string) {
   return "neutral";
 }
 
+function formatMoneyBucketList(buckets: ReportMoneyBucket[]) {
+  return (
+    buckets
+      .map((item) => formatMoney(item.total, item.currency))
+      .join(", ") || "0.00"
+  );
+}
+
+function getVisibleCountBuckets(buckets: ReportCountBucket[]) {
+  return buckets.filter((bucket) => bucket.count > 0);
+}
+
+function ReportCountTable({
+  title,
+  buckets,
+}: {
+  title: string;
+  buckets: ReportCountBucket[];
+}) {
+  const visibleBuckets = getVisibleCountBuckets(buckets);
+
+  return (
+    <section className="report-section stack">
+      <h3>{title}</h3>
+      {visibleBuckets.length ? (
+        <div className="table-wrap">
+          <table className="compact-table">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Count</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleBuckets.map((bucket) => (
+                <tr key={bucket.value}>
+                  <td>{bucket.label}</td>
+                  <td>{bucket.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="muted small">No activity in this report window.</p>
+      )}
+    </section>
+  );
+}
+
 function QueueRow({
   transfer,
   isSelected,
@@ -146,10 +203,13 @@ function QueueRow({
 export default function OperationsPage() {
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [transfers, setTransfers] = useState<OperationalTransfer[]>([]);
+  const [report, setReport] = useState<OperationsReport | null>(null);
   const [selectedTransfer, setSelectedTransfer] =
     useState<OperationalTransfer | null>(null);
   const [statusFilter, setStatusFilter] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [reportStartDate, setReportStartDate] = useState("");
+  const [reportEndDate, setReportEndDate] = useState("");
   const [transitionStatus, setTransitionStatus] = useState("");
   const [transitionNote, setTransitionNote] = useState("");
   const [complianceAction, setComplianceAction] = useState("note");
@@ -174,6 +234,7 @@ export default function OperationsPage() {
   const [sanctionsProviderReference, setSanctionsProviderReference] = useState("");
   const [sanctionsMatchScore, setSanctionsMatchScore] = useState("");
   const [loading, setLoading] = useState(false);
+  const [reportLoading, setReportLoading] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [applyingCompliance, setApplyingCompliance] = useState(false);
@@ -193,6 +254,7 @@ export default function OperationsPage() {
 
     if (savedSession?.user.is_staff) {
       loadTransfers(savedSession.token);
+      loadReport(savedSession.token);
     }
   }, []);
 
@@ -277,6 +339,28 @@ export default function OperationsPage() {
     }
   }
 
+  async function loadReport(token = authSession?.token) {
+    if (!token) {
+      return;
+    }
+
+    setError("");
+    setReportLoading(true);
+
+    try {
+      setReport(
+        await getOperationsReport(token, {
+          start_date: reportStartDate,
+          end_date: reportEndDate,
+        }),
+      );
+    } catch (apiError) {
+      setError(formatApiError(apiError));
+    } finally {
+      setReportLoading(false);
+    }
+  }
+
   async function refreshQueueWithTransfer(
     updatedTransfer: OperationalTransfer,
     token: string,
@@ -315,6 +399,7 @@ export default function OperationsPage() {
       saveAuthSession(staffSession);
       setAuthSession(staffSession);
       await loadTransfers(staffSession.token);
+      await loadReport(staffSession.token);
     } catch (apiError) {
       setError(formatApiError(apiError));
     } finally {
@@ -325,6 +410,11 @@ export default function OperationsPage() {
   function handleQueueSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     loadTransfers();
+  }
+
+  function handleReportSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    loadReport();
   }
 
   async function handleTransition(event: FormEvent<HTMLFormElement>) {
@@ -754,8 +844,14 @@ export default function OperationsPage() {
               {isStaff ? (
                 <>
                   <p className="muted small">Signed in as {authSession?.user.email}</p>
-                  <button type="button" onClick={() => loadTransfers()}>
-                    {loading ? "Loading..." : "Refresh queue"}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      loadTransfers();
+                      loadReport();
+                    }}
+                  >
+                    {loading || reportLoading ? "Loading..." : "Refresh operations"}
                   </button>
                 </>
               ) : (
@@ -820,6 +916,226 @@ export default function OperationsPage() {
                   <span>Exceptions</span>
                   <strong>{metrics.exceptions}</strong>
                 </div>
+              </section>
+
+              <section className="panel stack">
+                <div>
+                  <p className="kicker">Reports</p>
+                  <h2>Reporting and analytics</h2>
+                  {report ? (
+                    <p className="muted small">
+                      {formatDate(report.window.start_at)} to{" "}
+                      {formatDate(report.window.end_at)}
+                    </p>
+                  ) : null}
+                </div>
+
+                <form className="report-filter" onSubmit={handleReportSubmit}>
+                  <label>
+                    Start date
+                    <input
+                      type="date"
+                      value={reportStartDate}
+                      onChange={(event) => setReportStartDate(event.target.value)}
+                    />
+                  </label>
+
+                  <label>
+                    End date
+                    <input
+                      type="date"
+                      value={reportEndDate}
+                      onChange={(event) => setReportEndDate(event.target.value)}
+                    />
+                  </label>
+
+                  <button type="submit" disabled={reportLoading}>
+                    {reportLoading ? "Loading..." : "Run report"}
+                  </button>
+                </form>
+
+                {reportLoading ? (
+                  <p className="notice small">Loading reports...</p>
+                ) : null}
+
+                {report ? (
+                  <>
+                    <dl className="summary-list">
+                      <div>
+                        <dt>Transaction volume</dt>
+                        <dd>
+                          {report.transaction_volume.created_count} created /{" "}
+                          {report.transaction_volume.completed_count} completed (
+                          {report.transaction_volume.completion_rate_percent}%)
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Send amount</dt>
+                        <dd>{formatMoneyBucketList(
+                          report.transaction_volume.send_amount_by_currency,
+                        )}</dd>
+                      </div>
+                      <div>
+                        <dt>Receive amount</dt>
+                        <dd>{formatMoneyBucketList(
+                          report.transaction_volume.receive_amount_by_currency,
+                        )}</dd>
+                      </div>
+                      <div>
+                        <dt>Fees</dt>
+                        <dd>
+                          {formatMoney(report.revenue.total_fee_amount)} total /{" "}
+                          {formatMoney(report.revenue.realized_fee_amount)} realized
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Failed payments</dt>
+                        <dd>
+                          {report.failed_payment_rates.failed_count} of{" "}
+                          {report.failed_payment_rates.payment_instruction_count} (
+                          {report.failed_payment_rates.failed_rate_percent}%)
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Failed payouts</dt>
+                        <dd>
+                          {report.failed_payout_rates.failed_count} of{" "}
+                          {report.failed_payout_rates.payout_attempt_count} (
+                          {report.failed_payout_rates.failed_rate_percent}%)
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>KYC completion</dt>
+                        <dd>
+                          {report.kyc_completion.verified_count} of{" "}
+                          {report.kyc_completion.submitted_count} (
+                          {report.kyc_completion.completion_rate_percent}%)
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Open flags</dt>
+                        <dd>{report.admin_reports.open_compliance_flag_count}</dd>
+                      </div>
+                      <div>
+                        <dt>Admin queue</dt>
+                        <dd>
+                          {report.admin_reports.active_transfer_count} active /{" "}
+                          {report.admin_reports.exception_transfer_count} exceptions /{" "}
+                          {report.admin_reports.pending_notification_count} pending
+                          notifications
+                        </dd>
+                      </div>
+                    </dl>
+
+                    <dl className="summary-list report-summary">
+                      <div>
+                        <dt>Average fee</dt>
+                        <dd>{formatMoney(report.revenue.average_fee_amount)}</dd>
+                      </div>
+                      <div>
+                        <dt>Fee by currency</dt>
+                        <dd>
+                          {formatMoneyBucketList(report.revenue.fee_amount_by_currency)}
+                        </dd>
+                      </div>
+                    </dl>
+
+                    <div className="report-grid">
+                      <section className="report-section stack">
+                        <h3>Funnel tracking</h3>
+                        <div className="table-wrap">
+                          <table className="compact-table">
+                            <thead>
+                              <tr>
+                                <th>Step</th>
+                                <th>Count</th>
+                                <th>From previous</th>
+                                <th>From start</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {report.funnel.map((step) => (
+                                <tr key={step.value}>
+                                  <td>{step.label}</td>
+                                  <td>{step.count}</td>
+                                  <td>{step.conversion_from_previous_percent}%</td>
+                                  <td>{step.conversion_from_start_percent}%</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </section>
+
+                      <section className="report-section stack">
+                        <h3>Daily transaction volume</h3>
+                        {report.transaction_volume.daily.length ? (
+                          <div className="table-wrap">
+                            <table className="compact-table">
+                              <thead>
+                                <tr>
+                                  <th>Date</th>
+                                  <th>Currency</th>
+                                  <th>Transfers</th>
+                                  <th>Send total</th>
+                                  <th>Fee total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {report.transaction_volume.daily.map((item) => (
+                                  <tr key={`${item.date}-${item.currency}`}>
+                                    <td>{item.date}</td>
+                                    <td>{item.currency}</td>
+                                    <td>{item.transaction_count}</td>
+                                    <td>
+                                      {formatMoney(
+                                        item.send_amount_total,
+                                        item.currency,
+                                      )}
+                                    </td>
+                                    <td>
+                                      {formatMoney(
+                                        item.fee_amount_total,
+                                        item.currency,
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : (
+                          <p className="muted small">
+                            No transfer volume in this report window.
+                          </p>
+                        )}
+                      </section>
+
+                      <ReportCountTable
+                        title="Transfer status mix"
+                        buckets={report.transaction_volume.by_status}
+                      />
+                      <ReportCountTable
+                        title="Payment status mix"
+                        buckets={report.failed_payment_rates.by_status}
+                      />
+                      <ReportCountTable
+                        title="Payout status mix"
+                        buckets={report.failed_payout_rates.by_status}
+                      />
+                      <ReportCountTable
+                        title="KYC status mix"
+                        buckets={report.kyc_completion.status_counts}
+                      />
+                      <ReportCountTable
+                        title="Notification status mix"
+                        buckets={report.admin_reports.notification_status_counts}
+                      />
+                    </div>
+                  </>
+                ) : !reportLoading ? (
+                  <p className="muted small">No report data loaded yet.</p>
+                ) : null}
               </section>
 
               <div className="operations-layout">
