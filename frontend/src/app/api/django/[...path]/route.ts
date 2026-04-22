@@ -19,6 +19,10 @@ async function proxyToDjango(request: Request, context: RouteContext) {
   const apiBaseUrl = getDjangoApiBaseUrl();
 
   if (!apiBaseUrl) {
+    console.error(
+      "Django API proxy missing env var env_var=DJANGO_API_BASE_URL path=%s",
+      path,
+    );
     return Response.json(
       {
         detail: "Frontend API configuration is missing. Set DJANGO_API_BASE_URL.",
@@ -28,6 +32,7 @@ async function proxyToDjango(request: Request, context: RouteContext) {
   }
 
   const targetUrl = `${apiBaseUrl}/${path}/${url.search}`;
+  const shouldLogFxProxy = path === "quotes/rate";
 
   const headers = new Headers();
   const contentType = request.headers.get("content-type");
@@ -52,6 +57,12 @@ async function proxyToDjango(request: Request, context: RouteContext) {
       cache: "no-store",
     });
   } catch {
+    if (shouldLogFxProxy) {
+      console.error(
+        "Django API proxy request failed request_url=%s response_status= response_body=Could not reach backend",
+        targetUrl,
+      );
+    }
     return Response.json(
       {
         detail: "Could not reach the backend API. Please try again.",
@@ -61,6 +72,14 @@ async function proxyToDjango(request: Request, context: RouteContext) {
   }
 
   const responseBody = await response.text();
+  if (shouldLogFxProxy) {
+    console.info(
+      "Django API proxy response request_url=%s response_status=%s response_body=%s",
+      targetUrl,
+      response.status,
+      responseBody,
+    );
+  }
   const responseHeaders = new Headers();
   const responseType = response.headers.get("content-type");
 

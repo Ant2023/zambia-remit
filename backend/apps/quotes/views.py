@@ -2,7 +2,6 @@ from rest_framework import generics, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .fx_sources import DATABASE_FX_SOURCE, DatabaseFxRateSource
 from .models import FeeRule, Quote
 from .serializers import (
     FeeRuleSerializer,
@@ -11,7 +10,7 @@ from .serializers import (
     RateEstimateSerializer,
     build_rate_payload,
 )
-from .services import RateResult, get_active_corridor, get_rate_for_corridor
+from .services import get_active_corridor, get_rate_for_corridor
 
 
 class FeeRuleListView(generics.ListAPIView):
@@ -46,7 +45,7 @@ class RateEstimateView(APIView):
             data["source_country_id"],
             data["destination_country_id"],
         )
-        rate_result = self.get_rate_result(corridor)
+        rate_result = get_rate_for_corridor(corridor)
 
         payload = build_rate_payload(
             corridor=rate_result.corridor,
@@ -56,16 +55,3 @@ class RateEstimateView(APIView):
         )
         response_serializer = RateEstimateSerializer(payload)
         return Response(response_serializer.data)
-
-    def get_rate_result(self, corridor):
-        try:
-            return get_rate_for_corridor(corridor)
-        except Exception as exc:
-            fallback_result = DatabaseFxRateSource().get_rate(corridor)
-            fallback_payload = fallback_result.response_payload
-            if fallback_payload.get("source") != DATABASE_FX_SOURCE:
-                raise
-            return RateResult(
-                corridor=corridor,
-                exchange_rate=fallback_result.exchange_rate,
-            )

@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
+import logging
 
-from django.db.models import Q
-from django.utils import timezone
 from rest_framework import serializers
 
 from apps.countries.models import CountryCorridor
@@ -11,10 +10,12 @@ from apps.countries.services import (
     validate_payout_method_choice,
 )
 
-from .models import ExchangeRate, FeeRule
+from .fx_sources import get_fx_fallback_sources, get_fx_rate_source
+from .models import FeeRule
 
 
 MONEY_QUANT = Decimal("0.01")
+fx_logger = logging.getLogger("mbongopay.fx")
 
 
 @dataclass(frozen=True)
@@ -27,23 +28,43 @@ def get_rate_for_corridor(corridor: CountryCorridor) -> RateResult:
     if not corridor.is_active:
         raise serializers.ValidationError({"corridor_id": "Selected route is not active."})
 
-    now = timezone.now()
-    exchange_rate = (
-        ExchangeRate.objects.filter(
-            corridor=corridor,
-            is_active=True,
-            effective_at__lte=now,
+    primary_source = get_fx_rate_source()
+    try:
+        rate_result = primary_source.get_rate(corridor)
+    except serializers.ValidationError as primary_error:
+        fx_logger.exception(
+            "Primary FX rate source failed provider=%s corridor_id=%s reason=%s",
+            primary_source.code,
+            corridor.id,
+            primary_error,
         )
-        .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
-        .order_by("-effective_at", "-created_at")
-        .first()
-    )
-    if not exchange_rate:
-        raise serializers.ValidationError(
-            {"corridor_id": "No exchange rate is available for this route."},
-        )
+        for fallback_source in get_fx_fallback_sources(primary_source.code):
+            try:
+                fallback_result = fallback_source.get_rate(corridor)
+            except serializers.ValidationError as fallback_error:
+                fx_logger.exception(
+                    "Fallback FX rate source failed provider=%s corridor_id=%s "
+                    "reason=%s",
+                    fallback_source.code,
+                    corridor.id,
+                    fallback_error,
+                )
+                continue
 
-    return RateResult(corridor=corridor, exchange_rate=exchange_rate.rate)
+            fx_logger.warning(
+                "Using fallback FX rate provider primary_provider=%s "
+                "fallback_provider=%s corridor_id=%s",
+                primary_source.code,
+                fallback_source.code,
+                corridor.id,
+            )
+            return RateResult(
+                corridor=corridor,
+                exchange_rate=fallback_result.exchange_rate,
+            )
+        raise
+
+    return RateResult(corridor=corridor, exchange_rate=rate_result.exchange_rate)
 
 
 def get_active_corridor(source_country_id: str, destination_country_id: str):

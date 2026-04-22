@@ -1,6 +1,8 @@
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
@@ -15,6 +17,7 @@ from apps.countries.models import (
     PayoutProvider,
 )
 from common.choices import PayoutMethod
+from common.integrations import ProviderRequestError
 
 from .models import ExchangeRate, FeeRule, Quote
 
@@ -22,6 +25,7 @@ from .models import ExchangeRate, FeeRule, Quote
 User = get_user_model()
 
 
+@override_settings(FX_RATE_SOURCE="database", FX_RATE_SOURCE_CONFIGS={})
 class QuotePayoutRouteTests(APITestCase):
     def setUp(self):
         self.usd = Currency.objects.create(code="USD", name="US Dollar")
@@ -112,3 +116,144 @@ class QuotePayoutRouteTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("not available", str(response.data["payout_method"]))
+
+    @override_settings(
+        FX_RATE_SOURCE="open_exchange_rates",
+        FX_RATE_SOURCE_CONFIGS={
+            "open_exchange_rates": {
+                "app_id": "test-app-id",
+                "use_symbols": True,
+            },
+        },
+    )
+    @patch("apps.quotes.fx_sources.request_json")
+    def test_rate_estimate_uses_open_exchange_rates(self, mock_request_json):
+        mock_request_json.return_value = {
+            "base": "USD",
+            "timestamp": 1776834000,
+            "rates": {
+                "ZMW": "25.50000000",
+            },
+        }
+
+        response = self.client.get(
+            reverse("rate-estimate"),
+            {
+                "source_country_id": str(self.us.id),
+                "destination_country_id": str(self.zambia.id),
+                "send_amount": "100.00",
+                "payout_method": PayoutMethod.MOBILE_MONEY,
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(str(response.data["exchange_rate"]), "25.50000000")
+        self.assertEqual(str(response.data["receive_amount"]), "2550.00")
+        request_kwargs = mock_request_json.call_args.kwargs
+        self.assertEqual(request_kwargs["method"], "GET")
+        self.assertFalse(request_kwargs["include_api_key_auth"])
+        self.assertIn("/latest.json?", request_kwargs["path"])
+        self.assertIn("app_id=test-app-id", request_kwargs["path"])
+        self.assertIn("symbols=USD%2CZMW", request_kwargs["path"])
+
+    @override_settings(
+        FX_RATE_SOURCE="open_exchange_rates",
+        FX_RATE_SOURCE_CONFIGS={
+            "open_exchange_rates": {
+                "api_key": "test-app-id",
+            },
+        },
+    )
+    @patch("apps.quotes.fx_sources.request_json")
+    def test_open_exchange_rates_supports_cross_currency_rates(
+        self,
+        mock_request_json,
+    ):
+        gbp = Currency.objects.create(code="GBP", name="British Pound")
+        uk = Country.objects.create(
+            name="United Kingdom",
+            iso_code="GB",
+            dialing_code="+44",
+            currency=gbp,
+            is_sender_enabled=True,
+        )
+        gbp_corridor = CountryCorridor.objects.create(
+            source_country=uk,
+            destination_country=self.zambia,
+            source_currency=gbp,
+            destination_currency=self.zmw,
+            min_send_amount=Decimal("10.00"),
+            max_send_amount=Decimal("5000.00"),
+        )
+        route = CorridorPayoutMethod.objects.create(
+            corridor=gbp_corridor,
+            payout_method=PayoutMethod.MOBILE_MONEY,
+        )
+        provider = PayoutProvider.objects.get(code="test_quote_mobile_money")
+        CorridorPayoutProvider.objects.create(
+            corridor_payout_method=route,
+            provider=provider,
+        )
+        mock_request_json.return_value = {
+            "base": "USD",
+            "timestamp": 1776834000,
+            "rates": {
+                "GBP": "0.80000000",
+                "ZMW": "25.60000000",
+            },
+        }
+
+        response = self.client.get(
+            reverse("rate-estimate"),
+            {
+                "source_country_id": str(uk.id),
+                "destination_country_id": str(self.zambia.id),
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(str(response.data["exchange_rate"]), "32.00000000")
+        request_kwargs = mock_request_json.call_args.kwargs
+        self.assertNotIn("symbols=", request_kwargs["path"])
+
+    @override_settings(
+        FX_RATE_SOURCE="open_exchange_rates",
+        FX_RATE_SOURCE_CONFIGS={
+            "open_exchange_rates": {
+                "app_id": "test-app-id",
+                "use_symbols": True,
+            },
+        },
+    )
+    @patch("apps.quotes.fx_sources.request_json")
+    def test_rate_estimate_falls_back_to_frankfurter_when_primary_fails(
+        self,
+        mock_request_json,
+    ):
+        mock_request_json.side_effect = [
+            ProviderRequestError("open exchange rates down"),
+            {
+                "base": "USD",
+                "quote": "ZMW",
+                "date": "2026-04-22",
+                "rate": "25.70000000",
+            },
+        ]
+
+        response = self.client.get(
+            reverse("rate-estimate"),
+            {
+                "source_country_id": str(self.us.id),
+                "destination_country_id": str(self.zambia.id),
+                "send_amount": "100.00",
+                "payout_method": PayoutMethod.MOBILE_MONEY,
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(str(response.data["exchange_rate"]), "25.70000000")
+        self.assertEqual(str(response.data["receive_amount"]), "2570.00")
+        fallback_request_kwargs = mock_request_json.call_args_list[1].kwargs
+        self.assertEqual(fallback_request_kwargs["method"], "GET")
+        self.assertEqual(fallback_request_kwargs["path"], "/v2/rate/USD/ZMW")
+        self.assertFalse(fallback_request_kwargs["include_api_key_auth"])
