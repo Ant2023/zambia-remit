@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   type AuthSession,
   type Country,
+  type Currency,
   type RateEstimate,
   getDestinationCountries,
   getRateEstimate,
@@ -14,14 +15,101 @@ import {
 } from "@/lib/api";
 import { clearAuthSession, getStoredAuthSession } from "@/lib/auth";
 
+const PREVIEW_CURRENCIES: Record<string, Currency> = {
+  USD: {
+    id: "preview-currency-usd",
+    code: "USD",
+    name: "US Dollar",
+    minor_unit: 2,
+  },
+  GBP: {
+    id: "preview-currency-gbp",
+    code: "GBP",
+    name: "British Pound",
+    minor_unit: 2,
+  },
+  EUR: {
+    id: "preview-currency-eur",
+    code: "EUR",
+    name: "Euro",
+    minor_unit: 2,
+  },
+  ZMW: {
+    id: "preview-currency-zmw",
+    code: "ZMW",
+    name: "Zambian Kwacha",
+    minor_unit: 2,
+  },
+};
+
+const FALLBACK_SENDER_COUNTRIES: Country[] = [
+  {
+    id: "preview-country-us",
+    name: "United States",
+    iso_code: "US",
+    dialing_code: "+1",
+    currency: PREVIEW_CURRENCIES.USD,
+    is_sender_enabled: true,
+    is_destination_enabled: false,
+  },
+  {
+    id: "preview-country-gb",
+    name: "United Kingdom",
+    iso_code: "GB",
+    dialing_code: "+44",
+    currency: PREVIEW_CURRENCIES.GBP,
+    is_sender_enabled: true,
+    is_destination_enabled: false,
+  },
+  {
+    id: "preview-country-de",
+    name: "Germany",
+    iso_code: "DE",
+    dialing_code: "+49",
+    currency: PREVIEW_CURRENCIES.EUR,
+    is_sender_enabled: true,
+    is_destination_enabled: false,
+  },
+];
+
+const FALLBACK_DESTINATION_COUNTRIES: Country[] = [
+  {
+    id: "preview-country-zm",
+    name: "Zambia",
+    iso_code: "ZM",
+    dialing_code: "+260",
+    currency: PREVIEW_CURRENCIES.ZMW,
+    is_sender_enabled: false,
+    is_destination_enabled: true,
+  },
+];
+
+const FALLBACK_PREVIEW_RATES: Record<string, number> = {
+  USD: 25.4,
+  GBP: 32.25,
+  EUR: 27.4,
+};
+
+function isFallbackCountryId(countryId: string) {
+  return countryId.startsWith("preview-country-");
+}
+
 export default function Home() {
   const router = useRouter();
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [previewAmount, setPreviewAmount] = useState("100");
-  const [senderCountries, setSenderCountries] = useState<Country[]>([]);
-  const [destinationCountries, setDestinationCountries] = useState<Country[]>([]);
-  const [sourceCountryId, setSourceCountryId] = useState("");
-  const [destinationCountryId, setDestinationCountryId] = useState("");
+  const [senderCountries, setSenderCountries] = useState<Country[]>(
+    FALLBACK_SENDER_COUNTRIES,
+  );
+  const [destinationCountries, setDestinationCountries] = useState<Country[]>(
+    FALLBACK_DESTINATION_COUNTRIES,
+  );
+  const [sourceCountryId, setSourceCountryId] = useState(
+    FALLBACK_SENDER_COUNTRIES[0].id,
+  );
+  const [destinationCountryId, setDestinationCountryId] = useState(
+    FALLBACK_DESTINATION_COUNTRIES[0].id,
+  );
   const [rateEstimate, setRateEstimate] = useState<RateEstimate>();
   const [rateMessage, setRateMessage] = useState("");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -61,6 +149,14 @@ export default function Home() {
   useEffect(() => {
     async function loadPreviewRate() {
       if (!sourceCountryId || !destinationCountryId) {
+        return;
+      }
+
+      if (
+        isFallbackCountryId(sourceCountryId) ||
+        isFallbackCountryId(destinationCountryId)
+      ) {
+        setRateEstimate(undefined);
         return;
       }
 
@@ -107,7 +203,11 @@ export default function Home() {
     (country) => country.id === destinationCountryId,
   );
   const previewSendAmount = Number(previewAmount) > 0 ? Number(previewAmount) : 0;
-  const previewExchangeRate = Number(rateEstimate?.exchange_rate ?? "25.4");
+  const previewExchangeRate = Number(
+    rateEstimate?.exchange_rate ??
+      FALLBACK_PREVIEW_RATES[selectedSourceCountry?.currency.code ?? "USD"] ??
+      FALLBACK_PREVIEW_RATES.USD,
+  );
   const previewFee = Number(rateEstimate?.fee_amount ?? "0");
   const previewReceiveAmount = Number(
     rateEstimate?.receive_amount ?? previewSendAmount * previewExchangeRate,
@@ -301,7 +401,7 @@ export default function Home() {
                     >
                       {senderCountries.map((country) => (
                         <option key={country.id} value={country.id}>
-                          {country.currency.code}
+                          {country.currency.code} - {country.name}
                         </option>
                       ))}
                     </select>
@@ -340,7 +440,7 @@ export default function Home() {
                     >
                       {destinationCountries.map((country) => (
                         <option key={country.id} value={country.id}>
-                          {country.currency.code}
+                          {country.currency.code} - {country.name}
                         </option>
                       ))}
                     </select>
