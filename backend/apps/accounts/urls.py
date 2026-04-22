@@ -7,9 +7,14 @@ from .views import (
     PasswordResetConfirmView,
     PasswordResetRequestView,
     RegistrationView,
+    SenderDocumentDetailView,
+    SenderDocumentListCreateView,
     SenderKycSubmitView,
     SenderProfileView,
     StaffLoginView,
+    StaffSenderDocumentDownloadView,
+    StaffSenderDocumentListView,
+    StaffSenderDocumentReviewView,
     StaffSenderKycReviewView,
 )
 
@@ -32,6 +37,16 @@ urlpatterns = [
     path("me/", MeView.as_view(), name="account-me"),
     path("profile/", SenderProfileView.as_view(), name="sender-profile"),
     path(
+        "profile/documents/",
+        SenderDocumentListCreateView.as_view(),
+        name="sender-document-list",
+    ),
+    path(
+        "profile/documents/<uuid:pk>/",
+        SenderDocumentDetailView.as_view(),
+        name="sender-document-detail",
+    ),
+    path(
         "profile/kyc-submit/",
         SenderKycSubmitView.as_view(),
         name="sender-kyc-submit",
@@ -40,5 +55,20 @@ urlpatterns = [
         "profiles/<uuid:profile_id>/kyc-review/",
         StaffSenderKycReviewView.as_view(),
         name="sender-kyc-review",
+    ),
+    path(
+        "staff/documents/",
+        StaffSenderDocumentListView.as_view(),
+        name="staff-sender-document-list",
+    ),
+    path(
+        "staff/documents/<uuid:pk>/review/",
+        StaffSenderDocumentReviewView.as_view(),
+        name="staff-sender-document-review",
+    ),
+    path(
+        "staff/documents/<uuid:pk>/download/",
+        StaffSenderDocumentDownloadView.as_view(),
+        name="staff-sender-document-download",
     ),
 ]

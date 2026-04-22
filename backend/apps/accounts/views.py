@@ -1,19 +1,29 @@
+import logging
+from io import BytesIO
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
+from django.http import FileResponse
 from django.core.mail import send_mail
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework import generics, permissions, status
 from rest_framework.authtoken.models import Token
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import SenderProfile
+from common.permissions import IsStaffWithRequiredPermissions
+from common.security import decrypt_bytes
+from .models import SenderDocument, SenderProfile
 from .serializers import (
     CustomerLoginSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
+    SenderDocumentReviewSerializer,
+    SenderDocumentSerializer,
+    SenderDocumentUploadSerializer,
     SenderKycReviewSerializer,
     SenderProfileSerializer,
     StaffLoginSerializer,
@@ -23,21 +33,28 @@ from .serializers import (
 
 
 User = get_user_model()
+logger = logging.getLogger("mbongopay.security")
 PASSWORD_RESET_RESPONSE = (
     "If that customer account exists, a password reset link has been sent."
 )
 
 
+def issue_auth_token(user):
+    Token.objects.filter(user=user).delete()
+    return Token.objects.create(user=user)
+
+
 class RegistrationView(generics.CreateAPIView):
     serializer_class = UserRegistrationSerializer
     permission_classes = [permissions.AllowAny]
+    throttle_scope = "auth"
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         SenderProfile.objects.get_or_create(user=user)
-        token, _ = Token.objects.get_or_create(user=user)
+        token = issue_auth_token(user)
         return Response(
             {
                 "token": token.key,
@@ -49,6 +66,7 @@ class RegistrationView(generics.CreateAPIView):
 
 class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_scope = "auth"
 
     def post(self, request):
         serializer = CustomerLoginSerializer(
@@ -58,7 +76,14 @@ class LoginView(APIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data["user"]
         SenderProfile.objects.get_or_create(user=user)
-        token, _ = Token.objects.get_or_create(user=user)
+        token = issue_auth_token(user)
+        logger.info(
+            "Customer login token issued",
+            extra={
+                "request_id": getattr(request, "request_id", "-"),
+                "user_id": str(user.id),
+            },
+        )
         return Response(
             {
                 "token": token.key,
@@ -69,6 +94,7 @@ class LoginView(APIView):
 
 class PasswordResetRequestView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_scope = "password_reset"
 
     def post(self, request):
         serializer = PasswordResetRequestSerializer(data=request.data)
@@ -104,6 +130,7 @@ class PasswordResetRequestView(APIView):
 
 class PasswordResetConfirmView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_scope = "password_reset"
 
     def post(self, request):
         serializer = PasswordResetConfirmSerializer(data=request.data)
@@ -117,6 +144,7 @@ class PasswordResetConfirmView(APIView):
 
 class StaffLoginView(APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_scope = "auth"
 
     def post(self, request):
         serializer = StaffLoginSerializer(
@@ -125,7 +153,14 @@ class StaffLoginView(APIView):
         )
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data["user"]
-        token, _ = Token.objects.get_or_create(user=user)
+        token = issue_auth_token(user)
+        logger.info(
+            "Staff login token issued",
+            extra={
+                "request_id": getattr(request, "request_id", "-"),
+                "user_id": str(user.id),
+            },
+        )
         return Response(
             {
                 "token": token.key,
@@ -212,3 +247,95 @@ class StaffSenderKycReviewView(APIView):
             note=serializer.validated_data["review_note"],
         )
         return Response(SenderProfileSerializer(profile).data)
+
+
+class SenderDocumentListCreateView(generics.ListCreateAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+    throttle_scope = "document_upload"
+
+    def get_queryset(self):
+        return SenderDocument.objects.select_related(
+            "sender_profile__user",
+            "reviewed_by",
+        ).filter(sender_profile__user=self.request.user)
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return SenderDocumentUploadSerializer
+        return SenderDocumentSerializer
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["request"] = self.request
+        return context
+
+
+class SenderDocumentDetailView(generics.RetrieveAPIView):
+    serializer_class = SenderDocumentSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return SenderDocument.objects.select_related(
+            "sender_profile__user",
+            "reviewed_by",
+        ).filter(sender_profile__user=self.request.user)
+
+
+class StaffSenderDocumentListView(generics.ListAPIView):
+    serializer_class = SenderDocumentSerializer
+    permission_classes = [IsStaffWithRequiredPermissions]
+    required_permissions = ("accounts.view_senderdocument",)
+
+    def get_queryset(self):
+        queryset = SenderDocument.objects.select_related(
+            "sender_profile__user",
+            "reviewed_by",
+        )
+        status_filter = self.request.query_params.get("status", "").strip()
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+
+        query = self.request.query_params.get("q", "").strip()
+        if query:
+            queryset = queryset.filter(sender_profile__user__email__icontains=query)
+
+        return queryset[:100]
+
+
+class StaffSenderDocumentReviewView(generics.GenericAPIView):
+    serializer_class = SenderDocumentReviewSerializer
+    permission_classes = [IsStaffWithRequiredPermissions]
+    required_permissions = ("accounts.review_sender_document",)
+    queryset = SenderDocument.objects.select_related("sender_profile__user")
+
+    def post(self, request, *args, **kwargs):
+        document = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        document.mark_reviewed(
+            status=serializer.validated_data["status"],
+            reviewed_by=request.user,
+            note=serializer.validated_data["review_note"],
+        )
+        return Response(SenderDocumentSerializer(document).data)
+
+
+class StaffSenderDocumentDownloadView(generics.GenericAPIView):
+    permission_classes = [IsStaffWithRequiredPermissions]
+    required_permissions = ("accounts.download_sender_document",)
+    queryset = SenderDocument.objects.select_related("sender_profile__user")
+
+    def get(self, request, *args, **kwargs):
+        document = self.get_object()
+        with document.encrypted_file.open("rb") as encrypted_file:
+            plaintext = decrypt_bytes(encrypted_file.read())
+
+        response = FileResponse(
+            BytesIO(plaintext),
+            as_attachment=True,
+            filename=document.original_filename,
+            content_type=document.content_type,
+        )
+        response["Cache-Control"] = "no-store"
+        return response

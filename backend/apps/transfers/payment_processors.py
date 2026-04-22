@@ -5,6 +5,8 @@ import re
 
 from django.conf import settings
 
+from common.security import encrypt_text
+
 from .models import Transfer, TransferPaymentInstruction
 
 
@@ -128,11 +130,8 @@ class MockCardPaymentProcessor(BasePaymentProcessor):
         normalized_card_number = re.sub(r"\D", "", card_number)
         masked_card = f"**** **** **** {normalized_card_number[-4:]}"
         base_updates = {
-            "authorization_cardholder_name": cardholder_name,
+            "authorization_cardholder_name_encrypted": encrypt_text(cardholder_name),
             "authorization_masked_card": masked_card,
-            "authorization_expiry_month": f"{expiry_month:02d}",
-            "authorization_expiry_year": str(expiry_year),
-            "authorization_billing_postal_code": billing_postal_code,
             "processor_code": self.code,
             "processor_display_name": self.display_name,
         }

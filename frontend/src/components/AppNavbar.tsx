@@ -117,7 +117,7 @@ export function AppNavbar() {
               <Link href="/history">History</Link>
             </>
           )}
-          <Link href="/history">Help</Link>
+          <Link href="/help">Help</Link>
         </nav>
 
         <div className="premium-actions">
@@ -188,7 +188,7 @@ export function AppNavbar() {
               </Link>
             </>
           )}
-          <Link href="/history" onClick={() => setIsMobileMenuOpen(false)}>
+          <Link href="/help" onClick={() => setIsMobileMenuOpen(false)}>
             Help
           </Link>
           {authSession ? (

@@ -170,7 +170,7 @@ export default function Home() {
             <a href="#how-it-works">How it works</a>
             <a href="#preview">Rates</a>
             <a href="#trust">Security</a>
-            <Link href="/history">Help</Link>
+            <Link href="/help">Help</Link>
           </nav>
 
           <div className="premium-actions">
@@ -221,7 +221,7 @@ export default function Home() {
             <a href="#trust" onClick={() => setIsMobileMenuOpen(false)}>
               Security
             </a>
-            <Link href="/history" onClick={() => setIsMobileMenuOpen(false)}>
+            <Link href="/help" onClick={() => setIsMobileMenuOpen(false)}>
               Help
             </Link>
             {authSession ? (
@@ -457,17 +457,18 @@ export default function Home() {
               <p className="footer-heading">Company</p>
               <div className="footer-links">
                 <a href="#trust">About</a>
-                <Link href="/history">Support</Link>
-                <a href="#trust">Contact</a>
+                <Link href="/help">Support</Link>
+                <Link href="/contact">Contact</Link>
               </div>
             </div>
 
             <div>
               <p className="footer-heading">Legal</p>
               <div className="footer-links">
-                <a href="#trust">Privacy Policy</a>
-                <a href="#trust">Terms of Service</a>
-                <a href="#trust">Compliance</a>
+                <Link href="/privacy">Privacy Policy</Link>
+                <Link href="/terms">Terms of Service</Link>
+                <Link href="/refund-policy">Refund Policy</Link>
+                <Link href="/compliance">Compliance</Link>
               </div>
             </div>
           </div>

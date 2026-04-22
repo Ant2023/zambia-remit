@@ -1,4 +1,6 @@
 import os
+import base64
+import hashlib
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
@@ -35,12 +37,35 @@ def env_list(name: str, default: list[str] | None = None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def env_map(name: str, default: dict[str, str] | None = None) -> dict[str, str]:
+    value = os.getenv(name)
+    if value is None:
+        return default or {}
+
+    items = {}
+    for item in value.split(","):
+        if ":" not in item:
+            continue
+        key, secret = item.split(":", 1)
+        key = key.strip()
+        secret = secret.strip()
+        if key and secret:
+            items[key] = secret
+    return items
+
+
+def derive_fernet_key(secret: str) -> str:
+    digest = hashlib.sha256(secret.encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii")
+
+
 SECRET_KEY = env("DJANGO_SECRET_KEY", "unsafe-development-secret-key")
 DEBUG = env_bool("DJANGO_DEBUG", False)
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", ["localhost", "127.0.0.1"])
 
 
 INSTALLED_APPS = [
+    "common.apps.CommonConfig",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -58,6 +83,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "common.middleware.RequestIdMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -118,12 +144,26 @@ AUTH_USER_MODEL = "accounts.User"
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.TokenAuthentication",
+        "common.authentication.ExpiringTokenAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+        "rest_framework.throttling.ScopedRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": env("DRF_ANON_THROTTLE_RATE", "200/minute"),
+        "user": env("DRF_USER_THROTTLE_RATE", "1200/hour"),
+        "auth": env("DRF_AUTH_THROTTLE_RATE", "20/minute"),
+        "password_reset": env("DRF_PASSWORD_RESET_THROTTLE_RATE", "5/minute"),
+        "document_upload": env("DRF_DOCUMENT_UPLOAD_THROTTLE_RATE", "20/hour"),
+        "webhook": env("DRF_WEBHOOK_THROTTLE_RATE", "600/minute"),
+    },
+    "EXCEPTION_HANDLER": "common.exceptions.api_exception_handler",
 }
 
 LANGUAGE_CODE = "en-us"
@@ -136,6 +176,27 @@ STATIC_ROOT = ROOT_DIR / "staticfiles"
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = ROOT_DIR / "media"
+
+AUTH_TOKEN_TTL_HOURS = env_int("AUTH_TOKEN_TTL_HOURS", 168)
+
+_FIELD_ENCRYPTION_KEY = os.getenv("FIELD_ENCRYPTION_KEY", "").strip()
+FIELD_ENCRYPTION_KEY_IS_DERIVED = not bool(_FIELD_ENCRYPTION_KEY)
+FIELD_ENCRYPTION_KEY = _FIELD_ENCRYPTION_KEY or derive_fernet_key(SECRET_KEY)
+
+SECURE_DOCUMENT_MAX_UPLOAD_SIZE = env_int(
+    "SECURE_DOCUMENT_MAX_UPLOAD_SIZE",
+    10 * 1024 * 1024,
+)
+SECURE_DOCUMENT_ALLOWED_CONTENT_TYPES = env_list(
+    "SECURE_DOCUMENT_ALLOWED_CONTENT_TYPES",
+    ["application/pdf", "image/jpeg", "image/png"],
+)
+SECURE_DOCUMENT_STORAGE_ROOT = Path(
+    env("SECURE_DOCUMENT_STORAGE_ROOT", str(MEDIA_ROOT / "private_documents")),
+)
+DATA_UPLOAD_MAX_MEMORY_SIZE = env_int("DATA_UPLOAD_MAX_MEMORY_SIZE", 12 * 1024 * 1024)
+FILE_UPLOAD_MAX_MEMORY_SIZE = env_int("FILE_UPLOAD_MAX_MEMORY_SIZE", 12 * 1024 * 1024)
+FILE_UPLOAD_PERMISSIONS = 0o600
 
 EMAIL_BACKEND = env(
     "EMAIL_BACKEND",
@@ -155,5 +216,64 @@ BANK_TRANSFER_PAYMENT_PROCESSOR = env(
     "BANK_TRANSFER_PAYMENT_PROCESSOR",
     "manual_bank_transfer",
 )
+PAYMENT_WEBHOOK_SECRETS = env_map("PAYMENT_WEBHOOK_SECRETS")
+PAYOUT_WEBHOOK_SECRETS = env_map("PAYOUT_WEBHOOK_SECRETS")
+
+BACKUP_REQUIRED = env_bool("BACKUP_REQUIRED", False)
+BACKUP_STORAGE_URL = env("BACKUP_STORAGE_URL", "")
+BACKUP_ENCRYPTION_KEY = env("BACKUP_ENCRYPTION_KEY", "")
+BACKUP_RETENTION_DAYS = env_int("BACKUP_RETENTION_DAYS", 30)
+BACKUP_LOCAL_DIR = Path(env("BACKUP_LOCAL_DIR", str(ROOT_DIR / "backups")))
+
+LOG_LEVEL = env("DJANGO_LOG_LEVEL", "INFO")
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": (
+                "%(asctime)s %(levelname)s %(name)s "
+                "request_id=%(request_id)s user_id=%(user_id)s "
+                "%(message)s"
+            ),
+        },
+        "simple": {
+            "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+        },
+    },
+    "filters": {
+        "request_context": {
+            "()": "common.logging.RequestContextFilter",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+            "filters": ["request_context"],
+        },
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["console"],
+            "level": LOG_LEVEL,
+        },
+        "django.security": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "mbongopay.api": {
+            "handlers": ["console"],
+            "level": LOG_LEVEL,
+            "propagate": False,
+        },
+        "mbongopay.security": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

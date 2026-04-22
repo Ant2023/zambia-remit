@@ -1,15 +1,26 @@
+import hashlib
+import uuid
+
+from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model, password_validation
 from django.contrib.auth.tokens import default_token_generator
+from django.core.files.base import ContentFile
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 
 from apps.countries.models import Country
 from apps.countries.serializers import CountrySerializer
-from .models import SenderProfile
+from common.security import encrypt_bytes
+from .models import SenderDocument, SenderProfile
 
 
 User = get_user_model()
+DOCUMENT_MAGIC_BYTES = {
+    "application/pdf": (b"%PDF",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+}
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -53,6 +64,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"password_confirm": "Passwords do not match."},
             )
+        password_validation.validate_password(attrs["password"])
         return attrs
 
     def create(self, validated_data):
@@ -298,6 +310,127 @@ class SenderKycReviewSerializer(serializers.Serializer):
         } and not note:
             raise serializers.ValidationError(
                 {"review_note": "Add a note when KYC is rejected or needs review."},
+            )
+
+        attrs["review_note"] = note
+        return attrs
+
+
+class SenderDocumentSerializer(serializers.ModelSerializer):
+    original_filename = serializers.SerializerMethodField()
+    document_type_display = serializers.CharField(
+        source="get_document_type_display",
+        read_only=True,
+    )
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    sender_email = serializers.EmailField(
+        source="sender_profile.user.email",
+        read_only=True,
+    )
+    reviewed_by_email = serializers.EmailField(source="reviewed_by.email", read_only=True)
+
+    class Meta:
+        model = SenderDocument
+        fields = (
+            "id",
+            "sender_profile",
+            "sender_email",
+            "document_type",
+            "document_type_display",
+            "status",
+            "status_display",
+            "original_filename",
+            "content_type",
+            "file_size",
+            "sha256_digest",
+            "reviewed_by_email",
+            "reviewed_at",
+            "review_note",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+    def get_original_filename(self, obj):
+        return obj.original_filename
+
+
+class SenderDocumentUploadSerializer(serializers.Serializer):
+    document_type = serializers.ChoiceField(choices=SenderDocument.DocumentType.choices)
+    file = serializers.FileField(write_only=True)
+
+    def validate_file(self, uploaded_file):
+        max_size = settings.SECURE_DOCUMENT_MAX_UPLOAD_SIZE
+        allowed_types = set(settings.SECURE_DOCUMENT_ALLOWED_CONTENT_TYPES)
+        content_type = getattr(uploaded_file, "content_type", "") or ""
+
+        if uploaded_file.size > max_size:
+            raise serializers.ValidationError(
+                f"Document uploads are limited to {max_size // (1024 * 1024)} MB.",
+            )
+
+        if content_type not in allowed_types:
+            raise serializers.ValidationError("Upload a PDF, JPEG, or PNG document.")
+
+        header = uploaded_file.read(16)
+        uploaded_file.seek(0)
+        allowed_headers = DOCUMENT_MAGIC_BYTES.get(content_type, ())
+        if not any(header.startswith(prefix) for prefix in allowed_headers):
+            raise serializers.ValidationError("Document contents do not match the file type.")
+
+        return uploaded_file
+
+    def create(self, validated_data):
+        request = self.context["request"]
+        profile, _ = SenderProfile.objects.get_or_create(user=request.user)
+        uploaded_file = validated_data["file"]
+        plaintext = uploaded_file.read()
+        uploaded_file.seek(0)
+        encrypted_content = encrypt_bytes(plaintext)
+        filename = uploaded_file.name or "document"
+
+        document = SenderDocument(
+            sender_profile=profile,
+            uploaded_by=request.user,
+            document_type=validated_data["document_type"],
+            content_type=uploaded_file.content_type,
+            file_size=len(plaintext),
+            sha256_digest=hashlib.sha256(plaintext).hexdigest(),
+        )
+        document.set_original_filename(filename)
+        document.encrypted_file.save(
+            f"{uuid.uuid4().hex}.bin",
+            ContentFile(encrypted_content),
+            save=False,
+        )
+        document.save()
+        return document
+
+    def to_representation(self, instance):
+        return SenderDocumentSerializer(instance).data
+
+
+class SenderDocumentReviewSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=(
+            SenderDocument.Status.NEEDS_REVIEW,
+            SenderDocument.Status.APPROVED,
+            SenderDocument.Status.REJECTED,
+        ),
+    )
+    review_note = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=1000,
+    )
+
+    def validate(self, attrs):
+        status = attrs["status"]
+        note = attrs.get("review_note", "").strip()
+
+        if status == SenderDocument.Status.REJECTED and not note:
+            raise serializers.ValidationError(
+                {"review_note": "Add a note when rejecting a document."},
             )
 
         attrs["review_note"] = note

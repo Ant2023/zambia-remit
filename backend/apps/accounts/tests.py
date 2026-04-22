@@ -1,6 +1,10 @@
+import tempfile
+
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
 from django.contrib.auth.tokens import default_token_generator
 from django.core import mail
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.urls import reverse
 from django.utils.encoding import force_bytes
@@ -11,8 +15,9 @@ from rest_framework.test import APITestCase
 from rest_framework.authtoken.models import Token
 
 from apps.countries.models import Country, Currency
+from common.security import decrypt_bytes
 
-from .models import SenderProfile
+from .models import SenderDocument, SenderProfile
 
 
 User = get_user_model()
@@ -56,6 +61,22 @@ class StaffLoginTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("Staff access is required.", str(response.data["detail"]))
+
+    def test_customer_login_rotates_auth_token(self):
+        old_token = Token.objects.create(user=self.customer)
+
+        response = self.client.post(
+            reverse("account-login"),
+            {
+                "email": self.customer.email,
+                "password": "test-password-123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertNotEqual(response.data["token"], old_token.key)
+        self.assertEqual(Token.objects.filter(user=self.customer).count(), 1)
 
 
 @override_settings(
@@ -252,3 +273,124 @@ class SenderKycFlowTests(APITestCase):
             SenderProfile.KycStatus.NEEDS_REVIEW,
         )
         self.assertIn("changed after verification", self.profile.kyc_review_note)
+
+
+class SenderDocumentSecurityTests(APITestCase):
+    def setUp(self):
+        self.media_root = tempfile.TemporaryDirectory()
+        self.override = override_settings(
+            MEDIA_ROOT=self.media_root.name,
+            SECURE_DOCUMENT_STORAGE_ROOT=self.media_root.name,
+        )
+        self.override.enable()
+        self.customer = User.objects.create_user(
+            email="documents@example.com",
+            password="test-password-123",
+        )
+        self.staff = User.objects.create_user(
+            email="doc-staff@example.com",
+            password="test-password-123",
+            is_staff=True,
+        )
+        self.profile = SenderProfile.objects.create(user=self.customer)
+
+    def tearDown(self):
+        for document in SenderDocument.objects.all():
+            document.encrypted_file.delete(save=False)
+        self.override.disable()
+        self.media_root.cleanup()
+
+    def make_pdf(self, name="identity.pdf"):
+        return SimpleUploadedFile(
+            name,
+            b"%PDF-1.4\nsecure document body\n%%EOF",
+            content_type="application/pdf",
+        )
+
+    def upload_document(self):
+        self.client.force_authenticate(self.customer)
+        return self.client.post(
+            reverse("sender-document-list"),
+            {
+                "document_type": SenderDocument.DocumentType.GOVERNMENT_ID,
+                "file": self.make_pdf(),
+            },
+            format="multipart",
+        )
+
+    def test_customer_upload_encrypts_document_and_hides_file_url(self):
+        response = self.upload_document()
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertNotIn("encrypted_file", response.data)
+        self.assertEqual(response.data["original_filename"], "identity.pdf")
+
+        document = SenderDocument.objects.get()
+        with document.encrypted_file.open("rb") as encrypted_file:
+            encrypted_bytes = encrypted_file.read()
+
+        self.assertFalse(encrypted_bytes.startswith(b"%PDF"))
+        self.assertTrue(decrypt_bytes(encrypted_bytes).startswith(b"%PDF"))
+
+    def test_upload_rejects_mismatched_file_content(self):
+        self.client.force_authenticate(self.customer)
+        response = self.client.post(
+            reverse("sender-document-list"),
+            {
+                "document_type": SenderDocument.DocumentType.GOVERNMENT_ID,
+                "file": SimpleUploadedFile(
+                    "identity.pdf",
+                    b"not actually a pdf",
+                    content_type="application/pdf",
+                ),
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_staff_document_review_requires_role_permission(self):
+        upload_response = self.upload_document()
+        document_id = upload_response.data["id"]
+
+        self.client.force_authenticate(self.staff)
+        forbidden_response = self.client.post(
+            reverse("staff-sender-document-review", kwargs={"pk": document_id}),
+            {"status": SenderDocument.Status.APPROVED},
+            format="json",
+        )
+        self.assertEqual(forbidden_response.status_code, status.HTTP_403_FORBIDDEN)
+
+        review_permission = Permission.objects.get(codename="review_sender_document")
+        self.staff.user_permissions.add(review_permission)
+        self.staff = User.objects.get(pk=self.staff.pk)
+        self.client.force_authenticate(self.staff)
+        allowed_response = self.client.post(
+            reverse("staff-sender-document-review", kwargs={"pk": document_id}),
+            {"status": SenderDocument.Status.APPROVED},
+            format="json",
+        )
+
+        self.assertEqual(allowed_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(allowed_response.data["status"], SenderDocument.Status.APPROVED)
+
+    def test_staff_document_download_requires_download_permission(self):
+        upload_response = self.upload_document()
+        document_id = upload_response.data["id"]
+        self.client.force_authenticate(self.staff)
+
+        forbidden_response = self.client.get(
+            reverse("staff-sender-document-download", kwargs={"pk": document_id}),
+        )
+        self.assertEqual(forbidden_response.status_code, status.HTTP_403_FORBIDDEN)
+
+        download_permission = Permission.objects.get(codename="download_sender_document")
+        self.staff.user_permissions.add(download_permission)
+        self.staff = User.objects.get(pk=self.staff.pk)
+        self.client.force_authenticate(self.staff)
+        allowed_response = self.client.get(
+            reverse("staff-sender-document-download", kwargs={"pk": document_id}),
+        )
+
+        self.assertEqual(allowed_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(allowed_response["Cache-Control"], "no-store")

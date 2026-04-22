@@ -30,6 +30,21 @@ DJANGO_SECURE_SSL_REDIRECT=True
 DJANGO_SECURE_HSTS_SECONDS=31536000
 DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS=True
 DJANGO_SECURE_HSTS_PRELOAD=True
+AUTH_TOKEN_TTL_HOURS=168
+FIELD_ENCRYPTION_KEY=replace-with-fernet-key-generated-by-python
+
+SECURE_DOCUMENT_MAX_UPLOAD_SIZE=10485760
+SECURE_DOCUMENT_ALLOWED_CONTENT_TYPES=application/pdf,image/jpeg,image/png
+SECURE_DOCUMENT_STORAGE_ROOT=/var/lib/mbongopay/private_documents
+
+PAYMENT_WEBHOOK_SECRETS=provider-code:replace-with-payment-webhook-secret
+PAYOUT_WEBHOOK_SECRETS=provider-code:replace-with-payout-webhook-secret
+
+BACKUP_REQUIRED=True
+BACKUP_STORAGE_URL=s3://your-private-backup-bucket/postgres
+BACKUP_ENCRYPTION_KEY=replace-with-fernet-backup-key
+BACKUP_RETENTION_DAYS=30
+BACKUP_LOCAL_DIR=/var/backups/mbongopay
 ```
 
 ## Frontend Environment
@@ -43,10 +58,23 @@ DJANGO_API_BASE_URL=https://api.your-domain.com/api/v1
 ```powershell
 cd "C:\Money Projects\zambia-remit\backend"
 .\.venv\Scripts\python.exe manage.py check
+.\.venv\Scripts\python.exe manage.py check --deploy
 .\.venv\Scripts\python.exe manage.py makemigrations --check --dry-run
 .\.venv\Scripts\python.exe manage.py migrate
 .\.venv\Scripts\python.exe manage.py seed_core_data
 .\.venv\Scripts\python.exe manage.py collectstatic --noinput
+```
+
+Generate Fernet keys for `FIELD_ENCRYPTION_KEY` and `BACKUP_ENCRYPTION_KEY` with:
+
+```powershell
+.\.venv\Scripts\python.exe -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Run encrypted database backups from a host with `pg_dump` available:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py backup_database
 ```
 
 ## Frontend Pre-Deploy Commands
@@ -71,5 +99,9 @@ npm run build
 - History shows one aligned row per transfer.
 - Transfer detail shows status history.
 - A second customer cannot view the first customer's transfer detail URL.
+- Sender document uploads accept only PDF/JPEG/PNG files and do not expose media URLs.
+- Staff document review/download requires the sender document role permissions.
+- `manage.py check --deploy` passes with explicit encryption, webhook, and backup settings.
 - Django admin works for staff at `/admin/`.
 - `/api/v1/health/` returns `{"status":"ok"}`.
+- `/api/v1/health/ready/` returns `{"status":"ready"}` when the database is reachable.

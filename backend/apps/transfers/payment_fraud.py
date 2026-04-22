@@ -8,6 +8,8 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from common.security import decrypt_text
+
 from .models import (
     Transfer,
     TransferComplianceFlag,
@@ -144,9 +146,17 @@ def evaluate_payment_fraud_rule(
         )
 
     if rule.rule_type == TransferPaymentFraudRule.RuleType.CARDHOLDER_NAME_MISMATCH:
-        cardholder_name = str(
-            instruction.instructions.get("authorization_cardholder_name", ""),
+        cardholder_name = ""
+        encrypted_cardholder_name = instruction.instructions.get(
+            "authorization_cardholder_name_encrypted",
+            "",
         )
+        if encrypted_cardholder_name:
+            cardholder_name = decrypt_text(str(encrypted_cardholder_name))
+        else:
+            cardholder_name = str(
+                instruction.instructions.get("authorization_cardholder_name", ""),
+            )
         sender_name = (
             f"{instruction.transfer.sender.first_name} "
             f"{instruction.transfer.sender.last_name}"

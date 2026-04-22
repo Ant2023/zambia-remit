@@ -468,6 +468,7 @@ class TransferPaymentWebhookView(generics.GenericAPIView):
     serializer_class = PaymentWebhookEventCreateSerializer
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
+    throttle_scope = "webhook"
 
     @transaction.atomic
     def post(self, request, *args, **kwargs):
@@ -534,6 +535,7 @@ class TransferPayoutWebhookView(generics.GenericAPIView):
     serializer_class = PayoutWebhookEventCreateSerializer
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
+    throttle_scope = "webhook"
 
     @transaction.atomic
     def post(self, request, *args, **kwargs):

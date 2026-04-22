@@ -403,6 +403,7 @@ class TransferPayoutAttemptActionSerializer(serializers.Serializer):
 
 
 class TransferPaymentInstructionSerializer(serializers.ModelSerializer):
+    instructions = serializers.SerializerMethodField()
     payment_method_display = serializers.CharField(
         source="get_payment_method_display",
         read_only=True,
@@ -435,6 +436,18 @@ class TransferPaymentInstructionSerializer(serializers.ModelSerializer):
             "updated_at",
         )
         read_only_fields = fields
+
+    def get_instructions(self, obj):
+        sensitive_keys = {
+            "authorization_cardholder_name",
+            "authorization_cardholder_name_encrypted",
+            "authorization_billing_postal_code",
+        }
+        return {
+            key: value
+            for key, value in obj.instructions.items()
+            if key not in sensitive_keys and not key.endswith("_encrypted")
+        }
 
 
 class TransferComplianceFlagSerializer(serializers.ModelSerializer):

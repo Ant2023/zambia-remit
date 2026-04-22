@@ -7,4 +7,5 @@ __pycache__/
 .mypy_cache/
 staticfiles/
 media/
+backups/
 *.sqlite3
