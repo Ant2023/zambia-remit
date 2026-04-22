@@ -399,7 +399,7 @@ export default function Home() {
                     >
                       {senderCountries.map((country) => (
                         <option key={country.id} value={country.id}>
-                          {country.currency.code} - {country.name}
+                          {country.currency.code}
                         </option>
                       ))}
                     </select>
@@ -438,7 +438,7 @@ export default function Home() {
                     >
                       {destinationCountries.map((country) => (
                         <option key={country.id} value={country.id}>
-                          {country.currency.code} - {country.name}
+                          {country.currency.code}
                         </option>
                       ))}
                     </select>
