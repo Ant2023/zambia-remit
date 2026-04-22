@@ -84,12 +84,6 @@ const FALLBACK_DESTINATION_COUNTRIES: Country[] = [
   },
 ];
 
-const FALLBACK_PREVIEW_RATES: Record<string, number> = {
-  USD: 25.4,
-  GBP: 32.25,
-  EUR: 27.4,
-};
-
 function isFallbackCountryId(countryId: string) {
   return countryId.startsWith("preview-country-");
 }
@@ -112,6 +106,7 @@ export default function Home() {
   );
   const [rateEstimate, setRateEstimate] = useState<RateEstimate>();
   const [rateMessage, setRateMessage] = useState("");
+  const [loadingPreviewRate, setLoadingPreviewRate] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -145,8 +140,11 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    let ignoreResult = false;
+
     async function loadPreviewRate() {
       if (!sourceCountryId || !destinationCountryId) {
+        setLoadingPreviewRate(false);
         return;
       }
 
@@ -155,10 +153,12 @@ export default function Home() {
         isFallbackCountryId(destinationCountryId)
       ) {
         setRateEstimate(undefined);
+        setLoadingPreviewRate(false);
         return;
       }
 
       setRateMessage("");
+      setLoadingPreviewRate(true);
 
       try {
         const amount = Number(previewAmount);
@@ -168,16 +168,30 @@ export default function Home() {
           send_amount: amount > 0 ? previewAmount : undefined,
           payout_method: "mobile_money",
         });
+        if (ignoreResult) {
+          return;
+        }
         setRateEstimate(estimate);
       } catch (error) {
+        if (ignoreResult) {
+          return;
+        }
         setRateEstimate(undefined);
         setRateMessage(
           "Live rate data is temporarily unavailable. Please try again shortly.",
         );
+      } finally {
+        if (!ignoreResult) {
+          setLoadingPreviewRate(false);
+        }
       }
     }
 
     loadPreviewRate();
+
+    return () => {
+      ignoreResult = true;
+    };
   }, [destinationCountryId, previewAmount, sourceCountryId]);
 
   async function handleLogout() {
@@ -199,19 +213,6 @@ export default function Home() {
   );
   const selectedDestinationCountry = destinationCountries.find(
     (country) => country.id === destinationCountryId,
-  );
-  const previewSendAmount = Number(previewAmount) > 0 ? Number(previewAmount) : 0;
-  const previewExchangeRate = Number(
-    rateEstimate?.exchange_rate ??
-      FALLBACK_PREVIEW_RATES[selectedSourceCountry?.currency.code ?? "USD"] ??
-      FALLBACK_PREVIEW_RATES.USD,
-  );
-  const previewFee = Number(rateEstimate?.fee_amount ?? "0");
-  const previewReceiveAmount = Number(
-    rateEstimate?.receive_amount ?? previewSendAmount * previewExchangeRate,
-  );
-  const previewTotalToPay = Number(
-    rateEstimate?.total_amount ?? previewSendAmount + previewFee,
   );
   const sourceCurrencyCode =
     rateEstimate?.source_currency.code ?? selectedSourceCountry?.currency.code ?? "USD";
@@ -242,6 +243,25 @@ export default function Home() {
     return Number.isFinite(value)
       ? value.toLocaleString("en-US", { maximumFractionDigits: 2 })
       : "0";
+  }
+
+  function formatMoneyValue(value?: string | null) {
+    if (!value) {
+      return loadingPreviewRate ? "..." : "Pending";
+    }
+
+    return formatCurrencyAmount(Number(value));
+  }
+
+  function formatRateValue(value?: string) {
+    if (!value) {
+      return loadingPreviewRate ? "Loading live rate..." : "Live rate unavailable";
+    }
+
+    return Number(value).toLocaleString("en-US", {
+      maximumFractionDigits: 4,
+      minimumFractionDigits: 2,
+    });
   }
 
   const mapItems = [
@@ -412,8 +432,11 @@ export default function Home() {
                 <div>
                   <span className="rate-badge">First transfer rate</span>
                   <strong>
-                    1 {sourceCurrencyCode} = {previewExchangeRate.toFixed(2)}{" "}
-                    {destinationCurrencyCode}
+                    {rateEstimate
+                      ? `1 ${sourceCurrencyCode} = ${formatRateValue(
+                          rateEstimate.exchange_rate,
+                        )} ${destinationCurrencyCode}`
+                      : formatRateValue()}
                   </strong>
                 </div>
               </div>
@@ -422,7 +445,7 @@ export default function Home() {
                 <label className="rate-field-label">They get</label>
                 <div className="rate-field-control">
                   <div className="rate-receive-amount">
-                    {formatCurrencyAmount(previewReceiveAmount)}
+                    {formatMoneyValue(rateEstimate?.receive_amount)}
                   </div>
                   <div className="rate-currency-select">
                     <img
@@ -455,7 +478,7 @@ export default function Home() {
                 <div>
                   <dt>Fee</dt>
                   <dd>
-                    {previewFee.toFixed(2)} {sourceCurrencyCode}
+                    {formatMoneyValue(rateEstimate?.fee_amount)} {sourceCurrencyCode}
                   </dd>
                 </div>
                 <div>
@@ -465,7 +488,7 @@ export default function Home() {
                 <div>
                   <dt>Total to pay</dt>
                   <dd>
-                    {previewTotalToPay.toFixed(2)} {sourceCurrencyCode}
+                    {formatMoneyValue(rateEstimate?.total_amount)} {sourceCurrencyCode}
                   </dd>
                 </div>
               </dl>
