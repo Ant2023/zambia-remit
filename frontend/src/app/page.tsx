@@ -137,9 +137,7 @@ export default function Home() {
         setSourceCountryId(defaultSource?.id ?? "");
         setDestinationCountryId(defaultDestination?.id ?? "");
       } catch (error) {
-        setRateMessage(
-          "Live rate data is temporarily unavailable. Please try again shortly.",
-        );
+        setRateEstimate(undefined);
       }
     }
 
