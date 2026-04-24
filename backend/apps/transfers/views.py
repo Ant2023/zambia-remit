@@ -56,6 +56,7 @@ from .serializers import (
 from .payouts import (
     retry_payout_attempt,
     reverse_payout_attempt,
+    sync_payout_attempt_status_from_provider,
     submit_payout_for_transfer,
     sync_payout_attempt_status,
 )
@@ -802,6 +803,37 @@ class StaffTransferPayoutStatusSyncView(generics.GenericAPIView):
             metadata=serializer.validated_data.get("metadata", {}),
             changed_by=request.user,
             note=serializer.validated_data.get("status_reason", ""),
+        )
+        refreshed_transfer = self.get_queryset().get(pk=updated_attempt.transfer_id)
+        return Response(StaffTransferSerializer(refreshed_transfer).data)
+
+
+class StaffTransferPayoutProviderSyncView(generics.GenericAPIView):
+    serializer_class = TransferPayoutAttemptSubmitSerializer
+    permission_classes = [permissions.IsAdminUser]
+
+    def get_queryset(self):
+        return get_transfer_base_queryset()
+
+    def get_payout_attempt(self, transfer):
+        try:
+            return transfer.payout_attempts.get(id=self.kwargs["attempt_id"])
+        except TransferPayoutAttempt.DoesNotExist as exc:
+            raise ValidationError(
+                {"payout_attempt_id": "Payout attempt not found for this transfer."},
+            ) from exc
+
+    @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        transfer = self.get_object()
+        attempt = self.get_payout_attempt(transfer)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        updated_attempt = sync_payout_attempt_status_from_provider(
+            attempt,
+            changed_by=request.user,
+            note=serializer.validated_data.get("note", ""),
         )
         refreshed_transfer = self.get_queryset().get(pk=updated_attempt.transfer_id)
         return Response(StaffTransferSerializer(refreshed_transfer).data)

@@ -1,5 +1,7 @@
 from datetime import timedelta
 from decimal import Decimal
+import json
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import override_settings
@@ -41,6 +43,21 @@ from .services import apply_payment_instruction_status
 
 
 User = get_user_model()
+
+
+class MockProviderResponse:
+    def __init__(self, body="", status_code=200):
+        self.body = body.encode("utf-8")
+        self.status = status_code
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self):
+        return self.body
 
 
 @override_settings(
@@ -1061,6 +1078,136 @@ class CoreTransferProductTests(APITestCase):
             transfer.notifications.filter(
                 event_type=TransferNotification.EventType.PAYOUT_COMPLETE,
             ).exists(),
+        )
+
+    @override_settings(
+        PAYOUT_PROVIDER_CONFIGS={
+            "mtn_momo": {
+                "display_name": "MTN MoMo",
+                "base_url": "https://sandbox.momodeveloper.mtn.com",
+                "api_key": "secret-subscription-key",
+                "user_id": "mtn-api-user",
+                "api_secret": "mtn-api-secret",
+                "target_environment": "sandbox",
+            },
+        },
+    )
+    @patch("apps.transfers.payout_providers.urlopen")
+    def test_mtn_momo_payout_submission_maps_transfer_request(self, mocked_urlopen):
+        mocked_urlopen.side_effect = [
+            MockProviderResponse('{"access_token":"mtn-access-token"}'),
+            MockProviderResponse(""),
+        ]
+        payout_provider = PayoutProvider.objects.create(
+            code="mtn_momo",
+            name="MTN MoMo",
+            payout_method=PayoutMethod.MOBILE_MONEY,
+            metadata={"processor": "mtn_momo"},
+        )
+        transfer = self.create_transfer(status_value=Transfer.Status.FUNDING_RECEIVED)
+        transfer.payout_provider = payout_provider
+        transfer.save(update_fields=("payout_provider", "updated_at"))
+        self.client.force_authenticate(self.staff)
+
+        for target_status in (
+            Transfer.Status.UNDER_REVIEW,
+            Transfer.Status.APPROVED,
+            Transfer.Status.PROCESSING_PAYOUT,
+        ):
+            response = self.client.post(
+                reverse("transfer-status-transition", kwargs={"pk": transfer.pk}),
+                {"status": target_status, "note": f"Move to {target_status}."},
+                format="json",
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        transfer.refresh_from_db()
+        attempt = transfer.payout_attempts.get()
+        transfer_request = mocked_urlopen.call_args_list[1].args[0]
+        payload = json.loads(transfer_request.data.decode("utf-8"))
+        self.assertEqual(attempt.provider, payout_provider)
+        self.assertEqual(attempt.status, TransferPayoutAttempt.Status.PROCESSING)
+        self.assertEqual(transfer.payout_status, Transfer.PayoutStatus.PROCESSING)
+        self.assertEqual(payload["amount"], str(attempt.amount))
+        self.assertEqual(payload["currency"], "ZMW")
+        self.assertEqual(payload["externalId"], transfer.reference)
+        self.assertEqual(payload["payee"]["partyIdType"], "MSISDN")
+        self.assertEqual(payload["payee"]["partyId"], "260971234567")
+        self.assertEqual(
+            transfer_request.headers["X-reference-id"],
+            attempt.provider_reference,
+        )
+        self.assertEqual(
+            transfer_request.headers["Ocp-apim-subscription-key"],
+            "secret-subscription-key",
+        )
+        self.assertNotIn("secret-subscription-key", str(attempt.request_payload))
+        self.assertNotIn("mtn-api-secret", str(attempt.request_payload))
+
+    @override_settings(
+        PAYOUT_PROVIDER_CONFIGS={
+            "mtn_momo": {
+                "display_name": "MTN MoMo",
+                "base_url": "https://sandbox.momodeveloper.mtn.com",
+                "api_key": "secret-subscription-key",
+                "user_id": "mtn-api-user",
+                "api_secret": "mtn-api-secret",
+                "target_environment": "sandbox",
+            },
+        },
+    )
+    @patch("apps.transfers.payout_providers.urlopen")
+    def test_mtn_momo_provider_status_sync_marks_payout_success(self, mocked_urlopen):
+        mocked_urlopen.side_effect = [
+            MockProviderResponse('{"access_token":"mtn-access-token"}'),
+            MockProviderResponse(""),
+            MockProviderResponse('{"access_token":"mtn-access-token"}'),
+            MockProviderResponse(
+                '{"status":"SUCCESSFUL","financialTransactionId":"mtn-ft-123"}',
+            ),
+        ]
+        payout_provider = PayoutProvider.objects.create(
+            code="mtn_momo",
+            name="MTN MoMo",
+            payout_method=PayoutMethod.MOBILE_MONEY,
+            metadata={"processor": "mtn_momo"},
+        )
+        transfer = self.create_transfer(status_value=Transfer.Status.FUNDING_RECEIVED)
+        transfer.payout_provider = payout_provider
+        transfer.save(update_fields=("payout_provider", "updated_at"))
+        self.client.force_authenticate(self.staff)
+        for target_status in (
+            Transfer.Status.UNDER_REVIEW,
+            Transfer.Status.APPROVED,
+            Transfer.Status.PROCESSING_PAYOUT,
+        ):
+            response = self.client.post(
+                reverse("transfer-status-transition", kwargs={"pk": transfer.pk}),
+                {"status": target_status, "note": f"Move to {target_status}."},
+                format="json",
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        attempt = transfer.payout_attempts.get()
+        response = self.client.post(
+            reverse(
+                "transfer-payout-attempt-provider-sync",
+                kwargs={"pk": transfer.pk, "attempt_id": attempt.id},
+            ),
+            {"note": "Poll MTN for latest payout status."},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        transfer.refresh_from_db()
+        attempt.refresh_from_db()
+        self.assertEqual(transfer.status, Transfer.Status.PAID_OUT)
+        self.assertEqual(transfer.payout_status, Transfer.PayoutStatus.PAID_OUT)
+        self.assertEqual(attempt.status, TransferPayoutAttempt.Status.PAID_OUT)
+        self.assertEqual(attempt.provider_status, "SUCCESSFUL")
+        self.assertEqual(
+            attempt.response_payload["provider_transaction_id"],
+            "mtn-ft-123",
         )
 
     def test_payout_failure_can_be_retried_with_new_attempt(self):

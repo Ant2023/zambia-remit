@@ -6,6 +6,7 @@ from .views import (
     StaffTransferListView,
     StaffTransferPaymentActionView,
     StaffTransferPayoutAttemptView,
+    StaffTransferPayoutProviderSyncView,
     StaffTransferPayoutRetryView,
     StaffTransferPayoutReverseView,
     StaffTransferPayoutStatusSyncView,
@@ -74,6 +75,11 @@ urlpatterns = [
         "<uuid:pk>/payout-attempts/<uuid:attempt_id>/sync/",
         StaffTransferPayoutStatusSyncView.as_view(),
         name="transfer-payout-attempt-sync",
+    ),
+    path(
+        "<uuid:pk>/payout-attempts/<uuid:attempt_id>/provider-sync/",
+        StaffTransferPayoutProviderSyncView.as_view(),
+        name="transfer-payout-attempt-provider-sync",
     ),
     path(
         "<uuid:pk>/payout-attempts/<uuid:attempt_id>/retry/",

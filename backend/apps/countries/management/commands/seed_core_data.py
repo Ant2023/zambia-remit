@@ -98,12 +98,16 @@ class Command(BaseCommand):
 
     PAYOUT_PROVIDER_DEFAULTS = {
         PayoutMethod.MOBILE_MONEY: {
-            "code": "internal_mobile_money",
-            "name": "Internal mobile money operations",
+            "code": "mtn_momo",
+            "name": "MTN MoMo",
+            "metadata": {
+                "processor": "mtn_momo",
+            },
         },
         PayoutMethod.BANK_DEPOSIT: {
             "code": "internal_bank_deposit",
             "name": "Internal bank deposit operations",
+            "metadata": {},
         },
     }
 
@@ -231,6 +235,7 @@ class Command(BaseCommand):
                     "name": item["name"],
                     "payout_method": payout_method,
                     "is_active": True,
+                    "metadata": item.get("metadata", {}),
                 },
             )
             providers[payout_method] = provider

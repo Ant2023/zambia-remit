@@ -357,7 +357,10 @@ def submit_payout_for_transfer(
         created_by=changed_by,
     )
 
-    processor = get_payout_processor(transfer.payout_provider.code)
+    processor = get_payout_processor(
+        transfer.payout_provider.code,
+        provider=transfer.payout_provider,
+    )
     result = processor.submit_payout(transfer=transfer, attempt=attempt)
     attempt.request_payload = result.request_payload
     attempt.response_payload = result.response_payload
@@ -396,6 +399,31 @@ def sync_payout_attempt_status(
         provider_status=provider_status,
         status_reason=status_reason,
         response_payload=metadata or {},
+        action=TransferPayoutEvent.Action.STATUS_SYNC,
+    )
+
+
+@transaction.atomic
+def sync_payout_attempt_status_from_provider(
+    attempt: TransferPayoutAttempt,
+    *,
+    changed_by=None,
+    note: str = "",
+) -> TransferPayoutAttempt:
+    if attempt.is_terminal:
+        return attempt
+
+    processor = get_payout_processor(attempt.provider.code, provider=attempt.provider)
+    result = processor.get_payout_status(attempt=attempt)
+    return apply_payout_attempt_status(
+        attempt,
+        result.status,
+        changed_by=changed_by,
+        note=note or result.status_reason,
+        provider_event_id=result.provider_event_id,
+        provider_status=result.provider_status,
+        status_reason=result.status_reason,
+        response_payload=result.response_payload,
         action=TransferPayoutEvent.Action.STATUS_SYNC,
     )
 
@@ -458,7 +486,7 @@ def reverse_payout_attempt(
             {"payout_attempt_id": "Only paid out payout attempts can be reversed."},
         )
 
-    processor = get_payout_processor(attempt.provider.code)
+    processor = get_payout_processor(attempt.provider.code, provider=attempt.provider)
     result = processor.reverse_payout(attempt=attempt, note=note)
     return apply_payout_attempt_status(
         attempt,
