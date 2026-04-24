@@ -110,6 +110,16 @@ class CardPaymentAuthorizationSerializer(serializers.Serializer):
         return value
 
 
+class StripePaymentConfirmSerializer(serializers.Serializer):
+    payment_intent_id = serializers.CharField(max_length=120)
+
+    def validate_payment_intent_id(self, value):
+        value = value.strip()
+        if not value.startswith("pi_"):
+            raise serializers.ValidationError("Enter a valid Stripe PaymentIntent ID.")
+        return value
+
+
 class PaymentWebhookEventCreateSerializer(serializers.Serializer):
     event_id = serializers.CharField(max_length=120)
     event_type = serializers.CharField(max_length=120)

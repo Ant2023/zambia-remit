@@ -37,7 +37,10 @@ SECURE_DOCUMENT_MAX_UPLOAD_SIZE=10485760
 SECURE_DOCUMENT_ALLOWED_CONTENT_TYPES=application/pdf,image/jpeg,image/png
 SECURE_DOCUMENT_STORAGE_ROOT=/var/lib/mbongopay/private_documents
 
-PAYMENT_WEBHOOK_SECRETS=provider-code:replace-with-payment-webhook-secret
+CARD_PAYMENT_PROCESSOR=hosted_card_provider
+BANK_TRANSFER_PAYMENT_PROCESSOR=manual_bank_transfer
+PAYMENT_PROVIDER_CONFIGS={"hosted_card_provider":{"display_name":"Hosted card provider","base_url":"https://api.payment-provider.example","api_key":"replace-with-payment-api-key","create_session_path":"/checkout/sessions","checkout_url":"https://checkout.payment-provider.example"}}
+PAYMENT_WEBHOOK_SECRETS=hosted_card_provider:replace-with-payment-webhook-secret
 PAYOUT_WEBHOOK_SECRETS=provider-code:replace-with-payout-webhook-secret
 
 BACKUP_REQUIRED=True

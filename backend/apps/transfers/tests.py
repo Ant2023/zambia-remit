@@ -295,6 +295,37 @@ class CoreTransferProductTests(APITestCase):
         self.assertEqual(len(instruction.instructions["card_fields"]), 6)
         self.assertEqual(instruction.instructions["test_cards"][0]["outcome"], "authorized")
 
+    @override_settings(
+        CARD_PAYMENT_PROCESSOR="hosted_card_provider",
+        PAYMENT_PROVIDER_CONFIGS={
+            "hosted_card_provider": {
+                "display_name": "Hosted card provider",
+                "api_key": "secret-payment-key",
+                "checkout_url": "https://checkout.example/pay",
+            },
+        },
+    )
+    def test_configured_card_processor_prepares_provider_handoff(self):
+        transfer = self.create_transfer()
+        self.client.force_authenticate(self.sender)
+
+        response = self.client.post(
+            reverse("transfer-payment-instructions", kwargs={"pk": transfer.pk}),
+            {"payment_method": TransferPaymentInstruction.PaymentMethod.DEBIT_CARD},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["provider_name"], "hosted_card_provider")
+        instructions = response.data["instructions"]
+        self.assertEqual(instructions["integration_mode"], "hosted_card_checkout")
+        self.assertEqual(instructions["checkout_url"], "https://checkout.example/pay")
+        self.assertTrue(instructions["requires_provider_webhook"])
+        self.assertTrue(
+            instructions["provider_config"]["api_key_configured"],
+        )
+        self.assertNotIn("secret-payment-key", str(instructions))
+
     def test_credit_card_payment_instruction_uses_card_processor(self):
         transfer = self.create_transfer()
         self.client.force_authenticate(self.sender)

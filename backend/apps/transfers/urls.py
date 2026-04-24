@@ -13,6 +13,7 @@ from .views import (
     StaffTransferStatusTransitionView,
     TransferDetailView,
     TransferPaymentAuthorizationView,
+    TransferStripeConfirmView,
     TransferFundingView,
     TransferListCreateView,
     TransferPaymentInstructionView,
@@ -48,6 +49,11 @@ urlpatterns = [
         "<uuid:pk>/payment-instructions/<uuid:instruction_id>/authorize/",
         TransferPaymentAuthorizationView.as_view(),
         name="transfer-payment-instruction-authorize",
+    ),
+    path(
+        "<uuid:pk>/payment-instructions/<uuid:instruction_id>/stripe-confirm/",
+        TransferStripeConfirmView.as_view(),
+        name="transfer-payment-instruction-stripe-confirm",
     ),
     path(
         "<uuid:pk>/status/",

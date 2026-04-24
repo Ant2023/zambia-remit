@@ -96,4 +96,12 @@ def production_hardening_checks(app_configs, **kwargs):
                 ),
             )
 
+        if getattr(settings, "CARD_PAYMENT_PROCESSOR", "") == "mock_card_processor":
+            errors.append(
+                Warning(
+                    "CARD_PAYMENT_PROCESSOR is using the mock processor in production.",
+                    id="mbongopay.W004",
+                ),
+            )
+
     return errors

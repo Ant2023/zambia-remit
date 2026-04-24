@@ -25,6 +25,7 @@ from .models import (
     TransferStatusEvent,
 )
 from .payment_processors import (
+    StripePaymentProcessor,
     authorize_payment_instruction,
     get_payment_processor_by_provider,
     prepare_payment_instruction,
@@ -33,6 +34,7 @@ from .payment_fraud import evaluate_payment_fraud_rules
 from .notifications import notify_payment_received
 from .serializers import (
     CardPaymentAuthorizationSerializer,
+    StripePaymentConfirmSerializer,
     TransferComplianceActionSerializer,
     MockFundingSerializer,
     PaymentWebhookEventCreateSerializer,
@@ -460,6 +462,52 @@ class TransferPaymentAuthorizationView(generics.GenericAPIView):
         )
         instruction.refresh_from_db()
         evaluate_payment_fraud_rules(instruction, changed_by=request.user)
+        instruction.refresh_from_db()
+        return Response(TransferPaymentInstructionSerializer(instruction).data)
+
+
+class TransferStripeConfirmView(generics.GenericAPIView):
+    serializer_class = StripePaymentConfirmSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return get_transfer_queryset(self.request.user)
+
+    @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        transfer = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            instruction = transfer.payment_instructions.get(id=self.kwargs["instruction_id"])
+        except TransferPaymentInstruction.DoesNotExist as exc:
+            raise ValidationError(
+                {"instruction_id": "Payment instruction not found for this transfer."},
+            ) from exc
+
+        if instruction.provider_name != StripePaymentProcessor.code:
+            raise ValidationError(
+                {"instruction_id": "This endpoint is only for Stripe payment instructions."},
+            )
+
+        if instruction.status in {
+            TransferPaymentInstruction.Status.AUTHORIZED,
+            TransferPaymentInstruction.Status.PAID,
+        }:
+            instruction.refresh_from_db()
+            return Response(TransferPaymentInstructionSerializer(instruction).data)
+
+        processor = StripePaymentProcessor()
+        authorization_result = processor.verify_payment_intent(instruction=instruction)
+        apply_payment_instruction_status(
+            instruction,
+            authorization_result.status,
+            changed_by=request.user,
+            note=authorization_result.status_reason,
+            status_reason=authorization_result.status_reason,
+            instruction_updates=authorization_result.instruction_updates,
+        )
         instruction.refresh_from_db()
         return Response(TransferPaymentInstructionSerializer(instruction).data)
 

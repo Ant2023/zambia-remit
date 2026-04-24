@@ -1,6 +1,7 @@
 import os
 import base64
 import hashlib
+import json
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
@@ -52,6 +53,24 @@ def env_map(name: str, default: dict[str, str] | None = None) -> dict[str, str]:
         if key and secret:
             items[key] = secret
     return items
+
+
+def env_json(name: str, default: dict | None = None) -> dict:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default or {}
+
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ImproperlyConfigured(
+            f"{name} must be valid JSON.",
+        ) from exc
+
+    if not isinstance(parsed, dict):
+        raise ImproperlyConfigured(f"{name} must be a JSON object.")
+
+    return parsed
 
 
 def derive_fernet_key(secret: str) -> str:
@@ -211,11 +230,13 @@ EMAIL_USE_SSL = env_bool("EMAIL_USE_SSL", False)
 EMAIL_TIMEOUT = env_int("EMAIL_TIMEOUT", 10)
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", "support@mbongopay.local")
 FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", "http://localhost:3000").rstrip("/")
+STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", "")
 CARD_PAYMENT_PROCESSOR = env("CARD_PAYMENT_PROCESSOR", "mock_card_processor")
 BANK_TRANSFER_PAYMENT_PROCESSOR = env(
     "BANK_TRANSFER_PAYMENT_PROCESSOR",
     "manual_bank_transfer",
 )
+PAYMENT_PROVIDER_CONFIGS = env_json("PAYMENT_PROVIDER_CONFIGS")
 PAYMENT_WEBHOOK_SECRETS = env_map("PAYMENT_WEBHOOK_SECRETS")
 PAYOUT_WEBHOOK_SECRETS = env_map("PAYOUT_WEBHOOK_SECRETS")
 
