@@ -24,6 +24,7 @@ import {
   updateSenderProfile,
 } from "@/lib/api";
 import { getStoredAuthSession, saveAuthSession } from "@/lib/auth";
+import { getFxRateSourceSummary } from "@/lib/fx";
 
 type SelectedPaymentMethod = MockPaymentMethod | "";
 
@@ -612,6 +613,17 @@ export default function FundingPage() {
                   <div>
                     <dt>Recipient receives</dt>
                     <dd>{transfer.receive_amount}</dd>
+                  </div>
+                  <div>
+                    <dt>Exchange rate</dt>
+                    <dd>
+                      1 {transfer.source_currency_details.code} = {transfer.exchange_rate}{" "}
+                      {transfer.destination_currency_details.code}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>FX source</dt>
+                    <dd>{getFxRateSourceSummary(transfer)}</dd>
                   </div>
                   <div>
                     <dt>Created</dt>

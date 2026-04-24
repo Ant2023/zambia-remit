@@ -9,7 +9,7 @@ function getDjangoApiBaseUrl() {
 }
 
 type RouteContext = {
-  params: { path: string[] } | Promise<{ path: string[] }>;
+  params: Promise<{ path: string[] }>;
 };
 
 async function proxyToDjango(request: Request, context: RouteContext) {

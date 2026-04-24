@@ -6,6 +6,7 @@ import { AppNavbar } from "@/components/AppNavbar";
 import type { Transfer } from "@/lib/api";
 import { getTransfer } from "@/lib/api";
 import { getStoredAuthSession } from "@/lib/auth";
+import { getFxRateSourceSummary } from "@/lib/fx";
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", {
@@ -283,6 +284,10 @@ export default function SuccessPage() {
                         {transfer.exchange_rate}{" "}
                         {transfer.destination_currency_details.code}
                       </dd>
+                    </div>
+                    <div>
+                      <dt>FX source</dt>
+                      <dd>{getFxRateSourceSummary(transfer)}</dd>
                     </div>
                     <div>
                       <dt>Recipient receives</dt>

@@ -1,0 +1,26 @@
+
+> mbongopay-frontend@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.4 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.128.1:3000
+- Environments: .env.local
+✓ Ready in 2.7s
+Creating turbopack project { dir: 'C:\\Money Projects\\zambia-remit\\frontend', testMode: true }
+
+Django API proxy response request_url=http://127.0.0.1:8000/api/v1/quotes/rate/?source_country_id=us&destination_country_id=zm&send_amount=100&payout_method=mobile_money response_status=400 response_body={"source_country_id":["Must be a valid UUID."],"destination_country_id":["Must be a valid UUID."]}
+ GET /api/django/quotes/rate?source_country_id=us&destination_country_id=zm&send_amount=100&payout_method=mobile_money 400 in 5.2s (next.js: 4.9s, application-code: 244ms)
+ GET /api/django/countries/sender-countries 200 in 5.6s (next.js: 5.0s, application-code: 605ms)
+ GET /api/django/countries/destination-countries 200 in 313ms (next.js: 46ms, application-code: 266ms)
+ GET /api/django/countries/sender-countries 200 in 206ms (next.js: 17ms, application-code: 189ms)
+Django API proxy response request_url=http://127.0.0.1:8000/api/v1/quotes/rate/?source_country_id=9b069f96-ff9a-4eb7-baed-ff9b9b46910f&destination_country_id=13d84017-1c13-4309-8393-746b3876ca35&send_amount=100&payout_method=mobile_money response_status=400 response_body={"corridor_id":"Open Exchange Rates is unavailable."}
+ GET /api/django/quotes/rate?source_country_id=9b069f96-ff9a-4eb7-baed-ff9b9b46910f&destination_country_id=13d84017-1c13-4309-8393-746b3876ca35&send_amount=100&payout_method=mobile_money 400 in 5.4s (next.js: 29ms, application-code: 5.4s)
+Django API proxy response request_url=http://127.0.0.1:8000/api/v1/quotes/rate/?source_country_id=9b069f96-ff9a-4eb7-baed-ff9b9b46910f&destination_country_id=13d84017-1c13-4309-8393-746b3876ca35&send_amount=100&payout_method=mobile_money response_status=200 response_body={"corridor_id":"6bc672f4-a68b-46f6-9d90-b47356020d18","source_country":{"id":"9b069f96-ff9a-4eb7-baed-ff9b9b46910f","name":"United States","iso_code":"US","dialing_code":"+1","currency":{"id":"4c617f8e-2805-4d7e-92ba-e6a302b1bde5","code":"USD","name":"US Dollar","minor_unit":2},"is_sender_enabled":true,"is_destination_enabled":false},"destination_country":{"id":"13d84017-1c13-4309-8393-746b3876ca35","name":"Zambia","iso_code":"ZM","dialing_code":"+260","currency":{"id":"75910c99-3ce6-4f13-b6aa-1df85f9357e3","code":"ZMW","name":"Zambian Kwacha","minor_unit":2},"is_sender_enabled":false,"is_destination_enabled":true},"source_currency":{"id":"4c617f8e-2805-4d7e-92ba-e6a302b1bde5","code":"USD","name":"US Dollar","minor_unit":2},"destination_currency":{"id":"75910c99-3ce6-4f13-b6aa-1df85f9357e3","code":"ZMW","name":"Zambian Kwacha","minor_unit":2},"exchange_rate":"25.50000000","min_send_amount":"10.00","max_send_amount":"5000.00","send_amount":"100.00","fee_amount":"4.49","receive_amount":"2550.00","total_amount":"104.49"}
+ GET /api/django/quotes/rate?source_country_id=9b069f96-ff9a-4eb7-baed-ff9b9b46910f&destination_country_id=13d84017-1c13-4309-8393-746b3876ca35&send_amount=100&payout_method=mobile_money 200 in 5.3s (next.js: 36ms, application-code: 5.2s)
+ GET / 200 in 5.3s (next.js: 2.5s, application-code: 2.8s)
+ GET /api/django/countries/destination-countries 200 in 4.6s (next.js: 337ms, application-code: 4.3s)
+ GET /api/django/countries/sender-countries 200 in 5.9s (next.js: 1385ms, application-code: 4.5s)
+Django API proxy response request_url=http://127.0.0.1:8000/api/v1/quotes/rate/?source_country_id=9b069f96-ff9a-4eb7-baed-ff9b9b46910f&destination_country_id=13d84017-1c13-4309-8393-746b3876ca35&send_amount=100&payout_method=mobile_money response_status=200 response_body={"corridor_id":"6bc672f4-a68b-46f6-9d90-b47356020d18","source_country":{"id":"9b069f96-ff9a-4eb7-baed-ff9b9b46910f","name":"United States","iso_code":"US","dialing_code":"+1","currency":{"id":"4c617f8e-2805-4d7e-92ba-e6a302b1bde5","code":"USD","name":"US Dollar","minor_unit":2},"is_sender_enabled":true,"is_destination_enabled":false},"destination_country":{"id":"13d84017-1c13-4309-8393-746b3876ca35","name":"Zambia","iso_code":"ZM","dialing_code":"+260","currency":{"id":"75910c99-3ce6-4f13-b6aa-1df85f9357e3","code":"ZMW","name":"Zambian Kwacha","minor_unit":2},"is_sender_enabled":false,"is_destination_enabled":true},"source_currency":{"id":"4c617f8e-2805-4d7e-92ba-e6a302b1bde5","code":"USD","name":"US Dollar","minor_unit":2},"destination_currency":{"id":"75910c99-3ce6-4f13-b6aa-1df85f9357e3","code":"ZMW","name":"Zambian Kwacha","minor_unit":2},"exchange_rate":"25.50000000","min_send_amount":"10.00","max_send_amount":"5000.00","send_amount":"100.00","fee_amount":"4.49","receive_amount":"2550.00","total_amount":"104.49"}
+ GET /api/django/quotes/rate?source_country_id=9b069f96-ff9a-4eb7-baed-ff9b9b46910f&destination_country_id=13d84017-1c13-4309-8393-746b3876ca35&send_amount=100&payout_method=mobile_money 200 in 5.2s (next.js: 14ms, application-code: 5.2s)
+[?25h

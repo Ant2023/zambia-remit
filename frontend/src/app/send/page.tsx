@@ -421,6 +421,7 @@ export default function SendPage() {
                     key={`market-${flowKey}`}
                     senderCountries={senderCountries}
                     destinationCountries={destinationCountries}
+                    rateEstimate={rateEstimate}
                     sourceCountryId={sourceCountryId}
                     destinationCountryId={destinationCountryId}
                     sendAmount={sendAmount}

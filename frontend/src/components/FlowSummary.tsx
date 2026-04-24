@@ -1,6 +1,7 @@
 "use client";
 
 import type { Quote, RateEstimate, Recipient } from "@/lib/api";
+import { getFxRateSourceSummary } from "@/lib/fx";
 
 type FlowSummaryProps = {
   rateEstimate?: RateEstimate;
@@ -23,6 +24,19 @@ export function FlowSummary({
   reasonForSending,
   providerName,
 }: FlowSummaryProps) {
+  const activeFxSnapshot = quote ?? rateEstimate;
+  const displayedExchangeRate = quote?.exchange_rate ?? exchangeRate;
+  const countriesText = quote
+    ? `${quote.source_country.name} to ${quote.destination_country.name}`
+    : rateEstimate
+      ? `${rateEstimate.source_country.name} to ${rateEstimate.destination_country.name}`
+      : "Not selected";
+  const sendAmountText = quote
+    ? `${quote.send_amount} ${quote.source_currency.code}`
+    : sendAmount
+      ? `${sendAmount} ${rateEstimate?.source_currency.code ?? ""}`
+      : "Pending";
+
   return (
     <aside className="panel stack">
       <div>
@@ -33,23 +47,19 @@ export function FlowSummary({
       <dl className="summary-list">
         <div>
           <dt>Countries</dt>
-          <dd>
-            {rateEstimate
-              ? `${rateEstimate.source_country.name} to ${rateEstimate.destination_country.name}`
-              : "Not selected"}
-          </dd>
+          <dd>{countriesText}</dd>
         </div>
         <div>
           <dt>Send amount</dt>
-          <dd>
-            {sendAmount
-              ? `${sendAmount} ${rateEstimate?.source_currency.code ?? ""}`
-              : "Pending"}
-          </dd>
+          <dd>{sendAmountText}</dd>
         </div>
         <div>
           <dt>Exchange rate</dt>
-          <dd>{exchangeRate || "Pending"}</dd>
+          <dd>{displayedExchangeRate || "Pending"}</dd>
+        </div>
+        <div>
+          <dt>FX source</dt>
+          <dd>{getFxRateSourceSummary(activeFxSnapshot)}</dd>
         </div>
         <div>
           <dt>Recipient</dt>

@@ -142,12 +142,23 @@ export type RateEstimate = {
   source_currency: Currency;
   destination_currency: Currency;
   exchange_rate: string;
+  rate_source: string;
+  rate_provider_name: string;
+  is_primary_rate: boolean;
+  is_live_rate: boolean;
   min_send_amount: string;
   max_send_amount: string;
   send_amount: string | null;
   fee_amount: string | null;
   receive_amount: string | null;
   total_amount: string | null;
+};
+
+export type FxRateSnapshot = {
+  rate_source: string;
+  rate_provider_name: string;
+  is_primary_rate: boolean;
+  is_live_rate: boolean;
 };
 
 export type Recipient = {
@@ -194,6 +205,10 @@ export type Quote = {
   send_amount: string;
   fee_amount: string;
   exchange_rate: string;
+  rate_source: string;
+  rate_provider_name: string;
+  is_primary_rate: boolean;
+  is_live_rate: boolean;
   receive_amount: string;
   status: string;
   expires_at: string;
@@ -221,6 +236,10 @@ export type Transfer = {
   send_amount: string;
   fee_amount: string;
   exchange_rate: string;
+  rate_source: string;
+  rate_provider_name: string;
+  is_primary_rate: boolean;
+  is_live_rate: boolean;
   receive_amount: string;
   status: string;
   status_display: string;

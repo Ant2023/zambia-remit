@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { MobileHomePreview } from "@/components/MobileHomePreview";
 import {
   type AuthSession,
   type Country,
@@ -84,8 +85,38 @@ const FALLBACK_DESTINATION_COUNTRIES: Country[] = [
   },
 ];
 
+const DEFAULT_HOME_PREVIEW_RATE = 25.4;
+const DEFAULT_HOME_PREVIEW_SOURCE_CURRENCY = "USD";
+const DEFAULT_HOME_PREVIEW_DESTINATION_CURRENCY = "ZMW";
+const DEFAULT_HOME_PREVIEW_FEE = 0;
+
 function isFallbackCountryId(countryId: string) {
   return countryId.startsWith("preview-country-");
+}
+
+function parseAmountNumber(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const normalizedValue = value.replaceAll(",", "").trim();
+  if (!normalizedValue) {
+    return null;
+  }
+
+  const parsedAmount = Number(normalizedValue);
+  return Number.isFinite(parsedAmount) ? parsedAmount : null;
+}
+
+function areAmountsEquivalent(left?: string | null, right?: string | null) {
+  const leftAmount = parseAmountNumber(left);
+  const rightAmount = parseAmountNumber(right);
+
+  if (leftAmount === null || rightAmount === null) {
+    return leftAmount === rightAmount;
+  }
+
+  return Math.abs(leftAmount - rightAmount) < 0.0001;
 }
 
 export default function Home() {
@@ -107,7 +138,14 @@ export default function Home() {
   const [rateEstimate, setRateEstimate] = useState<RateEstimate>();
   const [rateMessage, setRateMessage] = useState("");
   const [loadingPreviewRate, setLoadingPreviewRate] = useState(false);
+  const [previewCountriesLoaded, setPreviewCountriesLoaded] = useState(false);
+  const [hasPreviewInteraction, setHasPreviewInteraction] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const previewAmountNumber = parseAmountNumber(previewAmount);
+  const previewRequestAmount =
+    previewAmountNumber !== null && previewAmountNumber > 0
+      ? String(previewAmountNumber)
+      : undefined;
 
   useEffect(() => {
     setAuthSession(getStoredAuthSession());
@@ -133,6 +171,8 @@ export default function Home() {
         setDestinationCountryId(defaultDestination?.id ?? "");
       } catch (error) {
         setRateEstimate(undefined);
+      } finally {
+        setPreviewCountriesLoaded(true);
       }
     }
 
@@ -143,6 +183,11 @@ export default function Home() {
     let ignoreResult = false;
 
     async function loadPreviewRate() {
+      if (!hasPreviewInteraction) {
+        setLoadingPreviewRate(false);
+        return;
+      }
+
       if (!sourceCountryId || !destinationCountryId) {
         setLoadingPreviewRate(false);
         return;
@@ -161,17 +206,27 @@ export default function Home() {
       setLoadingPreviewRate(true);
 
       try {
-        const amount = Number(previewAmount);
         const estimate = await getRateEstimate({
           source_country_id: sourceCountryId,
           destination_country_id: destinationCountryId,
-          send_amount: amount > 0 ? previewAmount : undefined,
+          send_amount: previewRequestAmount,
           payout_method: "mobile_money",
         });
         if (ignoreResult) {
           return;
         }
         setRateEstimate(estimate);
+        if (estimate.is_primary_rate) {
+          setRateMessage("");
+        } else if (estimate.rate_source === "frankfurter") {
+          setRateMessage(
+            "Open Exchange live rate is unavailable. Showing a fallback live market rate.",
+          );
+        } else {
+          setRateMessage(
+            "Open Exchange live rate is unavailable. Showing the latest stored reference rate.",
+          );
+        }
       } catch (error) {
         if (ignoreResult) {
           return;
@@ -192,7 +247,12 @@ export default function Home() {
     return () => {
       ignoreResult = true;
     };
-  }, [destinationCountryId, previewAmount, sourceCountryId]);
+  }, [
+    destinationCountryId,
+    hasPreviewInteraction,
+    previewRequestAmount,
+    sourceCountryId,
+  ]);
 
   async function handleLogout() {
     if (authSession?.token) {
@@ -214,12 +274,33 @@ export default function Home() {
   const selectedDestinationCountry = destinationCountries.find(
     (country) => country.id === destinationCountryId,
   );
+  const isCurrentSelectionRateEstimate =
+    rateEstimate?.source_country.id === sourceCountryId &&
+    rateEstimate?.destination_country.id === destinationCountryId &&
+    (previewRequestAmount
+      ? areAmountsEquivalent(rateEstimate?.send_amount, previewRequestAmount)
+      : rateEstimate?.send_amount === null);
+  const activeRateEstimate = isCurrentSelectionRateEstimate ? rateEstimate : undefined;
+  const selectedSourceCurrencyCode = selectedSourceCountry?.currency.code ?? "USD";
+  const selectedDestinationCurrencyCode =
+    selectedDestinationCountry?.currency.code ?? "ZMW";
+  const shouldShowDefaultPreview =
+    selectedSourceCurrencyCode === DEFAULT_HOME_PREVIEW_SOURCE_CURRENCY &&
+    selectedDestinationCurrencyCode === DEFAULT_HOME_PREVIEW_DESTINATION_CURRENCY &&
+    (!hasPreviewInteraction || !activeRateEstimate);
+  const defaultPreviewSendAmount = previewAmountNumber ?? 0;
+  const defaultPreviewReceiveAmount =
+    defaultPreviewSendAmount * DEFAULT_HOME_PREVIEW_RATE;
   const sourceCurrencyCode =
-    rateEstimate?.source_currency.code ?? selectedSourceCountry?.currency.code ?? "USD";
+    activeRateEstimate?.source_currency.code ?? selectedSourceCurrencyCode;
   const destinationCurrencyCode =
-    rateEstimate?.destination_currency.code ??
-    selectedDestinationCountry?.currency.code ??
-    "ZMW";
+    activeRateEstimate?.destination_currency.code ?? selectedDestinationCurrencyCode;
+  const previewSelectionReady =
+    previewCountriesLoaded &&
+    Boolean(sourceCountryId) &&
+    Boolean(destinationCountryId) &&
+    !isFallbackCountryId(sourceCountryId) &&
+    !isFallbackCountryId(destinationCountryId);
   const transferStartHref = authSession ? "/send" : "/start";
 
   function handlePreviewSendMoney() {
@@ -247,7 +328,7 @@ export default function Home() {
 
   function formatMoneyValue(value?: string | null) {
     if (!value) {
-      return loadingPreviewRate ? "..." : "Pending";
+      return loadingPreviewRate || !previewSelectionReady ? "..." : "Unavailable";
     }
 
     return formatCurrencyAmount(Number(value));
@@ -255,7 +336,9 @@ export default function Home() {
 
   function formatRateValue(value?: string) {
     if (!value) {
-      return loadingPreviewRate ? "Loading live rate..." : "Live rate unavailable";
+      return loadingPreviewRate || !previewSelectionReady
+        ? "Loading live rate..."
+        : "Live rate unavailable";
     }
 
     return Number(value).toLocaleString("en-US", {
@@ -271,6 +354,39 @@ export default function Home() {
     { src: "/flags/zm.svg", label: "Zambia" },
   ];
   const flagRibbonItems = [...mapItems, ...mapItems, ...mapItems];
+  const previewRateBadgeText = activeRateEstimate
+    ? activeRateEstimate.is_primary_rate
+      ? "Live Open Exchange rate"
+      : activeRateEstimate.is_live_rate
+        ? "Fallback live rate"
+        : "Reference rate"
+    : "Live rate";
+  const mobilePreviewRateBadgeText = "Best rate";
+  const exchangeRateText = shouldShowDefaultPreview
+    ? `1 ${sourceCurrencyCode} = ${formatRateValue(String(DEFAULT_HOME_PREVIEW_RATE))} ${destinationCurrencyCode}`
+    : activeRateEstimate
+      ? `1 ${sourceCurrencyCode} = ${formatRateValue(activeRateEstimate.exchange_rate)} ${destinationCurrencyCode}`
+      : formatRateValue();
+  const previewReceiveAmountText = shouldShowDefaultPreview
+    ? formatCurrencyAmount(defaultPreviewReceiveAmount)
+    : formatMoneyValue(activeRateEstimate?.receive_amount);
+  const previewFeeText = `${shouldShowDefaultPreview ? formatCurrencyAmount(DEFAULT_HOME_PREVIEW_FEE) : formatMoneyValue(activeRateEstimate?.fee_amount)} ${sourceCurrencyCode}`;
+  const previewTotalText = `${shouldShowDefaultPreview ? formatCurrencyAmount(defaultPreviewSendAmount + DEFAULT_HOME_PREVIEW_FEE) : formatMoneyValue(activeRateEstimate?.total_amount)} ${sourceCurrencyCode}`;
+
+  function handlePreviewAmountChange(value: string) {
+    setHasPreviewInteraction(true);
+    setPreviewAmount(value);
+  }
+
+  function handleSourceCountryChange(value: string) {
+    setHasPreviewInteraction(true);
+    setSourceCountryId(value);
+  }
+
+  function handleDestinationCountryChange(value: string) {
+    setHasPreviewInteraction(true);
+    setDestinationCountryId(value);
+  }
 
   return (
     <div className="premium-home">
@@ -368,8 +484,29 @@ export default function Home() {
         </div>
       </header>
 
+      <MobileHomePreview
+        onContinue={handlePreviewSendMoney}
+        previewAmount={previewAmount}
+        onPreviewAmountChange={handlePreviewAmountChange}
+        senderCountries={senderCountries}
+        destinationCountries={destinationCountries}
+        sourceCountryId={sourceCountryId}
+        destinationCountryId={destinationCountryId}
+        onSourceCountryChange={handleSourceCountryChange}
+        onDestinationCountryChange={handleDestinationCountryChange}
+        selectedSourceCountry={selectedSourceCountry}
+        selectedDestinationCountry={selectedDestinationCountry}
+        getFlagPath={getFlagPath}
+        previewRateBadgeText={mobilePreviewRateBadgeText}
+        exchangeRateText={exchangeRateText}
+        receiveAmountText={previewReceiveAmountText}
+        feeText={previewFeeText}
+        totalText={previewTotalText}
+        rateMessage={rateMessage}
+      />
+
       <main>
-        <section className="premium-hero">
+        <section className="premium-hero desktop-home-shell">
           <div>
             <div className="premium-pill">
               Secure transfers for modern global payments
@@ -403,7 +540,9 @@ export default function Home() {
                     inputMode="decimal"
                     aria-label="Amount to send"
                     value={previewAmount}
-                    onChange={(event) => setPreviewAmount(event.target.value)}
+                    onChange={(event) =>
+                      handlePreviewAmountChange(event.target.value)
+                    }
                   />
                   <div className="rate-currency-select">
                     <img
@@ -415,7 +554,9 @@ export default function Home() {
                       className="rate-country-select"
                       aria-label="Sender country"
                       value={sourceCountryId}
-                      onChange={(event) => setSourceCountryId(event.target.value)}
+                      onChange={(event) =>
+                        handleSourceCountryChange(event.target.value)
+                      }
                     >
                       {senderCountries.map((country) => (
                         <option key={country.id} value={country.id}>
@@ -430,14 +571,8 @@ export default function Home() {
               <div className="rate-connector">
                 <span className="rate-dot" />
                 <div>
-                  <span className="rate-badge">First transfer rate</span>
-                  <strong>
-                    {rateEstimate
-                      ? `1 ${sourceCurrencyCode} = ${formatRateValue(
-                          rateEstimate.exchange_rate,
-                        )} ${destinationCurrencyCode}`
-                      : formatRateValue()}
-                  </strong>
+                  <span className="rate-badge">{previewRateBadgeText}</span>
+                  <strong>{exchangeRateText}</strong>
                 </div>
               </div>
 
@@ -445,7 +580,7 @@ export default function Home() {
                 <label className="rate-field-label">They get</label>
                 <div className="rate-field-control">
                   <div className="rate-receive-amount">
-                    {formatMoneyValue(rateEstimate?.receive_amount)}
+                    {previewReceiveAmountText}
                   </div>
                   <div className="rate-currency-select">
                     <img
@@ -457,7 +592,9 @@ export default function Home() {
                       className="rate-country-select"
                       aria-label="Destination country"
                       value={destinationCountryId}
-                      onChange={(event) => setDestinationCountryId(event.target.value)}
+                      onChange={(event) =>
+                        handleDestinationCountryChange(event.target.value)
+                      }
                     >
                       {destinationCountries.map((country) => (
                         <option key={country.id} value={country.id}>
@@ -477,9 +614,7 @@ export default function Home() {
               <dl className="rate-summary-list">
                 <div>
                   <dt>Fee</dt>
-                  <dd>
-                    {formatMoneyValue(rateEstimate?.fee_amount)} {sourceCurrencyCode}
-                  </dd>
+                  <dd>{previewFeeText}</dd>
                 </div>
                 <div>
                   <dt>Transfer time</dt>
@@ -487,9 +622,7 @@ export default function Home() {
                 </div>
                 <div>
                   <dt>Total to pay</dt>
-                  <dd>
-                    {formatMoneyValue(rateEstimate?.total_amount)} {sourceCurrencyCode}
-                  </dd>
+                  <dd>{previewTotalText}</dd>
                 </div>
               </dl>
 

@@ -1,10 +1,15 @@
 "use client";
 
-import type { Country } from "@/lib/api";
+import type { Country, RateEstimate } from "@/lib/api";
+import {
+  getFxRateBadgeText,
+  getFxRateSourceDescription,
+} from "@/lib/fx";
 
 type MarketSelectorProps = {
   senderCountries: Country[];
   destinationCountries: Country[];
+  rateEstimate?: RateEstimate;
   sourceCountryId: string;
   destinationCountryId: string;
   sendAmount: string;
@@ -20,6 +25,7 @@ type MarketSelectorProps = {
 export function MarketSelector({
   senderCountries,
   destinationCountries,
+  rateEstimate,
   sourceCountryId,
   destinationCountryId,
   sendAmount,
@@ -31,6 +37,9 @@ export function MarketSelector({
   onDestinationCountryChange,
   onSendAmountChange,
 }: MarketSelectorProps) {
+  const rateBadgeText = getFxRateBadgeText(rateEstimate);
+  const rateSourceDescription = getFxRateSourceDescription(rateEstimate);
+
   return (
     <section className="panel stack">
       <div className="row">
@@ -90,6 +99,9 @@ export function MarketSelector({
             ? `1 ${sourceCurrencyCode} = ${exchangeRate} ${destinationCurrencyCode}`
             : "Select countries to see the rate"}
         </strong>
+        <p className="muted small">
+          {rateEstimate ? `${rateBadgeText}. ${rateSourceDescription}` : rateSourceDescription}
+        </p>
       </div>
 
       <div className="rate-box">

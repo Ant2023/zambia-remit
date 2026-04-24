@@ -4,6 +4,7 @@ import { FormEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Quote, Recipient } from "@/lib/api";
 import { createTransfer, formatApiError } from "@/lib/api";
+import { getFxRateSourceSummary } from "@/lib/fx";
 
 type TransferConfirmationProps = {
   authToken?: string;
@@ -97,6 +98,10 @@ export function TransferConfirmation({
                 1 {quote.source_currency.code} = {quote.exchange_rate}{" "}
                 {quote.destination_currency.code}
               </dd>
+            </div>
+            <div>
+              <dt>FX source</dt>
+              <dd>{getFxRateSourceSummary(quote)}</dd>
             </div>
             <div>
               <dt>Fee</dt>
