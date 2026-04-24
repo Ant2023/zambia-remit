@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { loadStripe } from "@stripe/stripe-js";
+import {
+  Elements,
+  PaymentElement,
+  useElements,
+  useStripe,
+} from "@stripe/react-stripe-js";
 import { AppNavbar } from "@/components/AppNavbar";
 import type {
   AuthSession,
@@ -14,7 +21,7 @@ import type {
   Transfer,
 } from "@/lib/api";
 import {
-  authorizeCardPaymentInstruction,
+  confirmStripePaymentInstruction,
   createPaymentInstruction,
   formatApiError,
   getSenderCountries,
@@ -26,38 +33,23 @@ import {
 import { getStoredAuthSession, saveAuthSession } from "@/lib/auth";
 import { getFxRateSourceSummary } from "@/lib/fx";
 
-type SelectedPaymentMethod = MockPaymentMethod | "";
+const stripePromise = loadStripe(
+  process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "",
+);
 
-const paymentMethods: Array<{
-  value: MockPaymentMethod;
-  label: string;
-}> = [
-  { value: "credit_card", label: "Credit card" },
-  { value: "debit_card", label: "Debit card" },
-  { value: "bank_transfer", label: "Bank transfer" },
-];
+type SelectedPaymentMethod = MockPaymentMethod | "";
 
 const cardPaymentMethods = new Set<MockPaymentMethod>([
   "credit_card",
   "debit_card",
 ]);
 
-const sandboxCardAuthorization = {
-  card_number: "4242 4242 4242 4242",
-  expiry_month: 12,
-  expiry_year: 2030,
-  cvv: "123",
-};
-
 function isCardPaymentMethod(value?: SelectedPaymentMethod | null) {
   return value ? cardPaymentMethods.has(value) : false;
 }
 
 function getUserDisplayName(user?: AuthSession["user"]) {
-  if (!user) {
-    return "";
-  }
-
+  if (!user) return "";
   return [user.first_name, user.last_name].filter(Boolean).join(" ").trim();
 }
 
@@ -85,6 +77,112 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+type StripeCardFormProps = {
+  clientSecret: string;
+  paymentIntentId: string;
+  instruction: PaymentInstruction;
+  transfer: Transfer;
+  authToken: string;
+  onSuccess: (updatedTransfer: Transfer) => void;
+  onError: (message: string) => void;
+  loading: boolean;
+  setLoading: (loading: boolean) => void;
+};
+
+function StripeCardForm({
+  clientSecret,
+  paymentIntentId,
+  instruction,
+  transfer,
+  authToken,
+  onSuccess,
+  onError,
+  loading,
+  setLoading,
+}: StripeCardFormProps) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [ready, setReady] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!stripe || !elements) return;
+
+    setLoading(true);
+    onError("");
+
+    const { error: submitError } = await elements.submit();
+    if (submitError) {
+      onError(submitError.message ?? "Failed to prepare payment. Please try again.");
+      setLoading(false);
+      return;
+    }
+
+    const { error: confirmError } = await stripe.confirmPayment({
+      elements,
+      redirect: "if_required",
+      confirmParams: {
+        return_url: window.location.href,
+      },
+    });
+
+    if (confirmError) {
+      onError(confirmError.message ?? "Payment failed. Please try again.");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const confirmedInstruction = await confirmStripePaymentInstruction(
+        transfer.id,
+        instruction.id,
+        { payment_intent_id: paymentIntentId },
+        authToken,
+      );
+
+      if (
+        confirmedInstruction.status !== "authorized" &&
+        confirmedInstruction.status !== "paid"
+      ) {
+        onError(
+          confirmedInstruction.status_reason ||
+            "Payment verification failed. Please contact support.",
+        );
+        setLoading(false);
+        return;
+      }
+
+      const updatedTransfer = await markTransferFunded(
+        transfer.id,
+        {
+          payment_method: instruction.payment_method,
+          payment_instruction_id: instruction.id,
+          note: "",
+        },
+        authToken,
+      );
+
+      onSuccess(updatedTransfer);
+    } catch (apiError) {
+      onError(formatApiError(apiError));
+      setLoading(false);
+    }
+  }
+
+  return (
+    <form className="stack" onSubmit={handleSubmit}>
+      <PaymentElement onReady={() => setReady(true)} />
+      <button
+        type="submit"
+        className={ready ? "payment-submit-button is-ready" : "payment-submit-button"}
+        disabled={loading || !stripe || !elements || !ready}
+      >
+        {loading ? "Processing..." : "Pay with card"}
+      </button>
+    </form>
+  );
+}
+
 export default function FundingPage() {
   const router = useRouter();
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
@@ -98,6 +196,7 @@ export default function FundingPage() {
   const [paymentMethod, setPaymentMethod] = useState<SelectedPaymentMethod>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const creatingInstructionRef = useRef(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -137,12 +236,10 @@ export default function FundingPage() {
 
   async function loadSenderProfile(token = authSession?.token) {
     setError("");
-
     if (!token) {
       setError("Log in with a customer account first.");
       return;
     }
-
     try {
       const profile = await getSenderProfile(token);
       setSenderProfile(profile);
@@ -154,19 +251,15 @@ export default function FundingPage() {
 
   async function loadTransfer(id = transferId, token = authSession?.token) {
     setError("");
-
     if (!id) {
       setError("Missing transfer id.");
       return;
     }
-
     if (!token) {
       setError("Log in with a customer account first.");
       return;
     }
-
     setLoading(true);
-
     try {
       const data = await getTransfer(id, token);
       setTransfer(data);
@@ -183,116 +276,81 @@ export default function FundingPage() {
     setPaymentInstruction(instruction);
     setTransfer((currentTransfer) =>
       currentTransfer
-        ? {
-            ...currentTransfer,
-            latest_payment_instruction: instruction,
-          }
+        ? { ...currentTransfer, latest_payment_instruction: instruction }
         : currentTransfer,
     );
   }
 
   function syncTransfer(updatedTransfer: Transfer) {
     setTransfer(updatedTransfer);
-    window.sessionStorage.setItem(
-      "latestTransfer",
-      JSON.stringify(updatedTransfer),
-    );
+    window.sessionStorage.setItem("latestTransfer", JSON.stringify(updatedTransfer));
   }
 
-  async function ensurePaymentInstruction() {
-    const selectedMethod = paymentMethod;
-
-    if (!transfer) {
-      throw new Error("Load the transfer before choosing payment.");
+  async function createInstructionForMethod(method: MockPaymentMethod) {
+    if (!transfer || !authSession?.token || !senderProfile?.is_complete) return;
+    if (creatingInstructionRef.current) return;
+    creatingInstructionRef.current = true;
+    setLoading(true);
+    setError("");
+    try {
+      const instruction = await createPaymentInstruction(
+        transfer.id,
+        { payment_method: method },
+        authSession.token,
+      );
+      syncPaymentInstruction(instruction);
+    } catch (apiError) {
+      setError(formatApiError(apiError));
+    } finally {
+      setLoading(false);
+      creatingInstructionRef.current = false;
     }
-
-    if (!authSession?.token) {
-      throw new Error("Log in with a customer account first.");
-    }
-
-    if (!senderProfile?.is_complete) {
-      throw new Error("Add sender details before paying for this transaction.");
-    }
-
-    if (!selectedMethod) {
-      throw new Error("Choose a payment method first.");
-    }
-
-    if (paymentInstruction?.payment_method === selectedMethod) {
-      return paymentInstruction;
-    }
-
-    const instruction = await createPaymentInstruction(
-      transfer.id,
-      { payment_method: selectedMethod },
-      authSession.token,
-    );
-    syncPaymentInstruction(instruction);
-    return instruction;
   }
 
-  async function completePayment(instruction: PaymentInstruction) {
-    if (!transfer) {
-      throw new Error("Load the transfer before completing payment.");
+  function handlePaymentMethodChange(method: SelectedPaymentMethod) {
+    setPaymentMethod(method);
+    if (paymentInstruction?.payment_method !== method) {
+      setPaymentInstruction(null);
     }
-
-    if (!authSession?.token) {
-      throw new Error("Log in with a customer account first.");
+    if (
+      method &&
+      isCardPaymentMethod(method) &&
+      transfer &&
+      authSession?.token &&
+      senderProfile?.is_complete
+    ) {
+      createInstructionForMethod(method);
     }
-
-    const updatedTransfer = await markTransferFunded(
-      transfer.id,
-      {
-        payment_method: instruction.payment_method,
-        payment_instruction_id: instruction.id,
-        note: "",
-      },
-      authSession.token,
-    );
-    syncTransfer(updatedTransfer);
-    router.push(`/success?transferId=${updatedTransfer.id}&funded=1`);
   }
 
-  async function handlePaymentSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleBankTransferSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setLoading(true);
-
     try {
-      const instruction = await ensurePaymentInstruction();
+      if (!transfer || !authSession?.token) throw new Error("Missing transfer or session.");
 
-      if (isCardPaymentMethod(instruction.payment_method)) {
-        const authorizedInstruction = await authorizeCardPaymentInstruction(
-          instruction.transfer,
-          instruction.id,
-          {
-            cardholder_name: getSenderDisplayName(authSession, senderProfile),
-            card_number: sandboxCardAuthorization.card_number,
-            expiry_month: sandboxCardAuthorization.expiry_month,
-            expiry_year: sandboxCardAuthorization.expiry_year,
-            cvv: sandboxCardAuthorization.cvv,
-            billing_postal_code: senderProfile?.postal_code?.trim() || "80202",
-          },
-          authSession?.token ?? "",
+      let instruction = paymentInstruction;
+      if (!instruction || instruction.payment_method !== paymentMethod) {
+        instruction = await createPaymentInstruction(
+          transfer.id,
+          { payment_method: paymentMethod as MockPaymentMethod },
+          authSession.token,
         );
-        syncPaymentInstruction(authorizedInstruction);
-
-        if (
-          authorizedInstruction.status !== "authorized" &&
-          authorizedInstruction.status !== "paid"
-        ) {
-          setError(
-            authorizedInstruction.status_reason ||
-              "The card authorization failed. Try a different payment method.",
-          );
-          return;
-        }
-
-        await completePayment(authorizedInstruction);
-        return;
+        syncPaymentInstruction(instruction);
       }
 
-      await completePayment(instruction);
+      const updatedTransfer = await markTransferFunded(
+        transfer.id,
+        {
+          payment_method: instruction.payment_method,
+          payment_instruction_id: instruction.id,
+          note: "",
+        },
+        authSession.token,
+      );
+      syncTransfer(updatedTransfer);
+      router.push(`/success?transferId=${updatedTransfer.id}&funded=1`);
     } catch (apiError) {
       setError(formatApiError(apiError));
     } finally {
@@ -303,12 +361,10 @@ export default function FundingPage() {
   async function handleSenderDetailsSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
-
     if (!authSession?.token) {
       setError("Log in with a customer account first.");
       return;
     }
-
     const form = new FormData(event.currentTarget);
     const payload: SenderProfilePayload = {
       first_name: String(form.get("first_name") ?? "").trim(),
@@ -316,24 +372,19 @@ export default function FundingPage() {
       phone_number: String(form.get("phone_number") ?? "").trim(),
       country_id: String(form.get("country_id") ?? ""),
     };
-
     if (!payload.first_name || !payload.last_name || !payload.phone_number) {
       setError("Enter your first name, last name, and phone number.");
       return;
     }
-
     if (!payload.country_id) {
       setError("Choose your country of residence.");
       return;
     }
-
     setLoading(true);
-
     try {
       const profile = await updateSenderProfile(payload, authSession.token);
       setSenderProfile(profile);
       setEditingSenderDetails(false);
-
       const updatedSession = {
         ...authSession,
         user: {
@@ -360,21 +411,31 @@ export default function FundingPage() {
     senderProfile?.last_name || authSession?.user.last_name || "";
   const signedInLabel =
     getUserDisplayName(authSession?.user) || authSession?.user.email || "";
-  const canSubmitPayment = Boolean(
+
+  const isStripeInstruction =
+    paymentInstruction?.instructions?.integration_mode === "stripe_payment_element";
+  const stripeClientSecret = isStripeInstruction
+    ? (paymentInstruction?.instructions?.client_secret ?? "")
+    : "";
+  const stripePaymentIntentId = isStripeInstruction
+    ? (paymentInstruction?.instructions?.payment_intent_id ?? "")
+    : "";
+
+  const showStripeForm =
+    isCardPaymentMethod(paymentMethod) &&
+    isStripeInstruction &&
+    stripeClientSecret &&
     transfer &&
-      senderProfile?.is_complete &&
-      paymentMethod &&
-      authSession?.token &&
-      !isFunded,
+    authSession?.token &&
+    senderProfile?.is_complete &&
+    !isFunded;
+
+  const showBankTransferForm =
+    paymentMethod === "bank_transfer" && !isFunded;
+
+  const canSubmitBankTransfer = Boolean(
+    transfer && senderProfile?.is_complete && authSession?.token && !isFunded,
   );
-  const selectedPaymentMethodLabel =
-    paymentMethods.find((method) => method.value === paymentMethod)?.label ??
-    "payment method";
-  const paymentButtonLabel = paymentMethod
-    ? isCardPaymentMethod(paymentMethod)
-      ? `Authorize ${selectedPaymentMethodLabel.toLowerCase()} and pay`
-      : `Pay with ${selectedPaymentMethodLabel.toLowerCase()}`
-    : "Choose payment method";
 
   return (
     <div className="premium-home">
@@ -540,7 +601,7 @@ export default function FundingPage() {
                     </Link>
                   </>
                 ) : (
-                  <form className="stack" onSubmit={handlePaymentSubmit}>
+                  <div className="stack">
                     {!senderProfile?.is_complete ? (
                       <p className="notice small">
                         Save sender details before completing payment.
@@ -552,36 +613,73 @@ export default function FundingPage() {
                       <select
                         value={paymentMethod}
                         onChange={(event) => {
-                          const nextMethod = event.target.value as SelectedPaymentMethod;
-                          setPaymentMethod(nextMethod);
-                          if (paymentInstruction?.payment_method !== nextMethod) {
-                            setPaymentInstruction(null);
-                          }
+                          handlePaymentMethodChange(
+                            event.target.value as SelectedPaymentMethod,
+                          );
                         }}
                       >
                         <option value="" disabled>
                           Choose payment method
                         </option>
-                        {paymentMethods.map((method) => (
-                          <option key={method.value} value={method.value}>
-                            {method.label}
-                          </option>
-                        ))}
+                        <option value="credit_card">Credit card</option>
+                        <option value="debit_card">Debit card</option>
+                        <option value="bank_transfer">Bank transfer</option>
                       </select>
                     </label>
 
-                    <button
-                      type="submit"
-                      className={
-                        canSubmitPayment
-                          ? "payment-submit-button is-ready"
-                          : "payment-submit-button"
-                      }
-                      disabled={loading || !canSubmitPayment}
-                    >
-                      {loading ? "Processing..." : paymentButtonLabel}
-                    </button>
-                  </form>
+                    {isCardPaymentMethod(paymentMethod) && loading && !showStripeForm ? (
+                      <p className="muted small">Preparing secure payment form...</p>
+                    ) : null}
+
+                    {showStripeForm ? (
+                      <Elements
+                        stripe={stripePromise}
+                        options={{
+                          clientSecret: stripeClientSecret,
+                          appearance: {
+                            theme: "stripe",
+                            variables: {
+                              colorPrimary: "#10b981",
+                              borderRadius: "8px",
+                            },
+                          },
+                        }}
+                      >
+                        <StripeCardForm
+                          clientSecret={stripeClientSecret}
+                          paymentIntentId={stripePaymentIntentId}
+                          instruction={paymentInstruction!}
+                          transfer={transfer!}
+                          authToken={authSession!.token}
+                          loading={loading}
+                          setLoading={setLoading}
+                          onError={(msg) => setError(msg)}
+                          onSuccess={(updatedTransfer) => {
+                            syncTransfer(updatedTransfer);
+                            router.push(
+                              `/success?transferId=${updatedTransfer.id}&funded=1`,
+                            );
+                          }}
+                        />
+                      </Elements>
+                    ) : null}
+
+                    {showBankTransferForm ? (
+                      <form className="stack" onSubmit={handleBankTransferSubmit}>
+                        <button
+                          type="submit"
+                          className={
+                            canSubmitBankTransfer
+                              ? "payment-submit-button is-ready"
+                              : "payment-submit-button"
+                          }
+                          disabled={loading || !canSubmitBankTransfer}
+                        >
+                          {loading ? "Processing..." : "Pay with bank transfer"}
+                        </button>
+                      </form>
+                    ) : null}
+                  </div>
                 )}
               </section>
             </div>
@@ -617,7 +715,8 @@ export default function FundingPage() {
                   <div>
                     <dt>Exchange rate</dt>
                     <dd>
-                      1 {transfer.source_currency_details.code} = {transfer.exchange_rate}{" "}
+                      1 {transfer.source_currency_details.code} ={" "}
+                      {transfer.exchange_rate}{" "}
                       {transfer.destination_currency_details.code}
                     </dd>
                   </div>

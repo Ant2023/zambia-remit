@@ -10,6 +10,8 @@ export default function StartPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [sendAmount, setSendAmount] = useState("100");
+  const [sourceCurrencyCode, setSourceCurrencyCode] = useState("USD");
+  const [destinationCountryName, setDestinationCountryName] = useState("Zambia");
 
   useEffect(() => {
     const session = getStoredAuthSession();
@@ -19,6 +21,10 @@ export default function StartPage() {
     }
 
     setSendAmount(window.sessionStorage.getItem("sendAmount") || "100");
+    setSourceCurrencyCode(window.sessionStorage.getItem("sourceCurrencyCode") || "USD");
+    setDestinationCountryName(
+      window.sessionStorage.getItem("destinationCountryName") || "Zambia",
+    );
     setCheckingSession(false);
   }, [router]);
 
@@ -47,7 +53,7 @@ export default function StartPage() {
               {displaySendAmount.toLocaleString("en-US", {
                 maximumFractionDigits: 2,
               })}{" "}
-              USD to Zambia
+              {sourceCurrencyCode} to {destinationCountryName}
             </strong>
           </div>
 

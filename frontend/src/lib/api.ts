@@ -432,6 +432,8 @@ export type PaymentInstructionDetails = {
   routing_number?: string;
   amount_label?: string;
   reference?: string;
+  client_secret?: string;
+  payment_intent_id?: string;
   card_fields?: Array<{
     name: string;
     label: string;
@@ -1094,6 +1096,22 @@ export function createPaymentInstruction(
 ) {
   return apiFetch<PaymentInstruction>(
     `/transfers/${id}/payment-instructions`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    token,
+  );
+}
+
+export function confirmStripePaymentInstruction(
+  transferId: string,
+  instructionId: string,
+  payload: { payment_intent_id: string },
+  token: string,
+) {
+  return apiFetch<PaymentInstruction>(
+    `/transfers/${transferId}/payment-instructions/${instructionId}/stripe-confirm`,
     {
       method: "POST",
       body: JSON.stringify(payload),

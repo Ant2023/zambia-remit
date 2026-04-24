@@ -83,6 +83,7 @@ export default function SendPage() {
 
     const savedRecipient = window.sessionStorage.getItem("createdRecipient");
     const savedQuote = window.sessionStorage.getItem("createdQuote");
+    const savedRateEstimate = window.sessionStorage.getItem("rateEstimate");
     const savedSendAmount = window.sessionStorage.getItem("sendAmount") ?? "";
     const savedSourceCountryId = window.sessionStorage.getItem("sourceCountryId");
     const savedDestinationCountryId =
@@ -95,6 +96,9 @@ export default function SendPage() {
       ? (JSON.parse(savedRecipient) as Recipient)
       : undefined;
     const restoredQuote = savedQuote ? (JSON.parse(savedQuote) as Quote) : undefined;
+    const restoredRateEstimate = savedRateEstimate
+      ? (JSON.parse(savedRateEstimate) as RateEstimate)
+      : undefined;
 
     if (restoredRecipient) {
       setRecipient(restoredRecipient);
@@ -102,6 +106,10 @@ export default function SendPage() {
 
     if (restoredQuote) {
       setQuote(restoredQuote);
+    }
+
+    if (restoredRateEstimate) {
+      setRateEstimate(restoredRateEstimate);
     }
 
     if (restoredRecipient && restoredQuote) {
@@ -190,8 +198,10 @@ export default function SendPage() {
           payout_method: payoutMethod,
         });
         setRateEstimate(estimate);
+        window.sessionStorage.setItem("rateEstimate", JSON.stringify(estimate));
       } catch (apiError) {
         setRateEstimate(undefined);
+        window.sessionStorage.removeItem("rateEstimate");
         setRateError(formatApiError(apiError));
       } finally {
         setLoadingRate(false);
@@ -234,8 +244,14 @@ export default function SendPage() {
     selectedDestinationCountry?.name ??
     rateEstimate?.destination_country.name ??
     "Destination country";
-  const sourceCurrencyCode = rateEstimate?.source_currency.code ?? "";
-  const destinationCurrencyCode = rateEstimate?.destination_currency.code ?? "";
+  const sourceCurrencyCode =
+    rateEstimate?.source_currency.code ??
+    senderCountries.find((country) => country.id === sourceCountryId)?.currency.code ??
+    "";
+  const destinationCurrencyCode =
+    rateEstimate?.destination_currency.code ??
+    selectedDestinationCountry?.currency.code ??
+    "";
   const recipientName = getRecipientName(recipient);
 
   useEffect(() => {

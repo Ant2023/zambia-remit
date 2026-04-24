@@ -13,6 +13,9 @@ const FLOW_SESSION_KEYS = [
   "payoutMethod",
   "reasonForSending",
   "providerName",
+  "rateEstimate",
+  "sourceCurrencyCode",
+  "destinationCountryName",
 ];
 
 export function getStoredAuthSession(): AuthSession | null {

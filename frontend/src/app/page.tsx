@@ -287,7 +287,7 @@ export default function Home() {
   const shouldShowDefaultPreview =
     selectedSourceCurrencyCode === DEFAULT_HOME_PREVIEW_SOURCE_CURRENCY &&
     selectedDestinationCurrencyCode === DEFAULT_HOME_PREVIEW_DESTINATION_CURRENCY &&
-    (!hasPreviewInteraction || !activeRateEstimate);
+    !hasPreviewInteraction;
   const defaultPreviewSendAmount = previewAmountNumber ?? 0;
   const defaultPreviewReceiveAmount =
     defaultPreviewSendAmount * DEFAULT_HOME_PREVIEW_RATE;
@@ -311,6 +311,16 @@ export default function Home() {
     if (destinationCountryId) {
       window.sessionStorage.setItem("destinationCountryId", destinationCountryId);
     }
+    if (activeRateEstimate) {
+      window.sessionStorage.setItem("rateEstimate", JSON.stringify(activeRateEstimate));
+    } else {
+      window.sessionStorage.removeItem("rateEstimate");
+    }
+    window.sessionStorage.setItem("sourceCurrencyCode", sourceCurrencyCode);
+    window.sessionStorage.setItem(
+      "destinationCountryName",
+      selectedDestinationCountry?.name ?? "Zambia",
+    );
     router.push(transferStartHref);
   }
 
