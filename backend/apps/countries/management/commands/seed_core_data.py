@@ -267,7 +267,9 @@ class Command(BaseCommand):
                     provider=provider,
                     defaults={
                         "is_active": True,
-                        "priority": 10,
+                        "priority": 5
+                        if provider.code == "mtn_momo"
+                        else 10,
                         "min_send_amount": None,
                         "max_send_amount": None,
                     },
