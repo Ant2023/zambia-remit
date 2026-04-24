@@ -531,6 +531,8 @@ class MtnMomoPayoutProcessor(BasePayoutProcessor):
             ) from exc
         except URLError as exc:
             raise ProviderRequestError(f"{self.code} request failed: {exc}") from exc
+        except TimeoutError as exc:
+            raise ProviderRequestError(f"{self.code} request timed out.") from exc
 
         if not response_body:
             return {}
@@ -594,9 +596,10 @@ class MtnMomoPayoutProcessor(BasePayoutProcessor):
         attempt: TransferPayoutAttempt,
     ) -> dict:
         account = self._mobile_money_account(transfer)
+        currency_code = self._metadata_value("currency", attempt.currency.code)
         payload = {
             "amount": str(attempt.amount),
-            "currency": attempt.currency.code,
+            "currency": currency_code,
             "externalId": transfer.reference,
             "payee": {
                 "partyIdType": self._metadata_value("party_id_type", "MSISDN"),

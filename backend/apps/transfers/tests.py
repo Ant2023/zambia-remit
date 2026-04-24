@@ -1089,6 +1089,7 @@ class CoreTransferProductTests(APITestCase):
                 "user_id": "mtn-api-user",
                 "api_secret": "mtn-api-secret",
                 "target_environment": "sandbox",
+                "currency": "EUR",
             },
         },
     )
@@ -1129,7 +1130,7 @@ class CoreTransferProductTests(APITestCase):
         self.assertEqual(attempt.status, TransferPayoutAttempt.Status.PROCESSING)
         self.assertEqual(transfer.payout_status, Transfer.PayoutStatus.PROCESSING)
         self.assertEqual(payload["amount"], str(attempt.amount))
-        self.assertEqual(payload["currency"], "ZMW")
+        self.assertEqual(payload["currency"], "EUR")
         self.assertEqual(payload["externalId"], transfer.reference)
         self.assertEqual(payload["payee"]["partyIdType"], "MSISDN")
         self.assertEqual(payload["payee"]["partyId"], "260971234567")
@@ -1143,6 +1144,56 @@ class CoreTransferProductTests(APITestCase):
         )
         self.assertNotIn("secret-subscription-key", str(attempt.request_payload))
         self.assertNotIn("mtn-api-secret", str(attempt.request_payload))
+
+    @override_settings(
+        PAYOUT_PROVIDER_CONFIGS={
+            "mtn_momo": {
+                "display_name": "MTN MoMo",
+                "base_url": "https://sandbox.momodeveloper.mtn.com",
+                "api_key": "secret-subscription-key",
+                "user_id": "mtn-api-user",
+                "api_secret": "mtn-api-secret",
+                "target_environment": "sandbox",
+                "currency": "EUR",
+            },
+        },
+    )
+    @patch("apps.transfers.payout_providers.urlopen")
+    def test_mtn_momo_payout_timeout_marks_attempt_failed(self, mocked_urlopen):
+        mocked_urlopen.side_effect = [
+            MockProviderResponse('{"access_token":"mtn-access-token"}'),
+            TimeoutError("timed out"),
+        ]
+        payout_provider = PayoutProvider.objects.create(
+            code="mtn_momo",
+            name="MTN MoMo",
+            payout_method=PayoutMethod.MOBILE_MONEY,
+            metadata={"processor": "mtn_momo"},
+        )
+        transfer = self.create_transfer(status_value=Transfer.Status.FUNDING_RECEIVED)
+        transfer.payout_provider = payout_provider
+        transfer.save(update_fields=("payout_provider", "updated_at"))
+        self.client.force_authenticate(self.staff)
+
+        for target_status in (
+            Transfer.Status.UNDER_REVIEW,
+            Transfer.Status.APPROVED,
+            Transfer.Status.PROCESSING_PAYOUT,
+        ):
+            response = self.client.post(
+                reverse("transfer-status-transition", kwargs={"pk": transfer.pk}),
+                {"status": target_status, "note": f"Move to {target_status}."},
+                format="json",
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        transfer.refresh_from_db()
+        attempt = transfer.payout_attempts.get()
+        self.assertEqual(attempt.status, TransferPayoutAttempt.Status.FAILED)
+        self.assertEqual(transfer.status, Transfer.Status.FAILED)
+        self.assertEqual(transfer.payout_status, Transfer.PayoutStatus.FAILED)
+        self.assertIn("timed out", attempt.status_reason)
+        self.assertEqual(attempt.response_payload["provider_status"], "submission_failed")
 
     @override_settings(
         PAYOUT_PROVIDER_CONFIGS={
