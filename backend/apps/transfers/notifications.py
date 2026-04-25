@@ -4,9 +4,10 @@ from decimal import Decimal
 from typing import Iterable
 
 from django.conf import settings
-from django.core.mail import send_mail
 from django.db import transaction
 from django.utils import timezone
+
+from common.email_providers import send_transactional_email
 
 from .models import (
     Transfer,
@@ -139,12 +140,17 @@ def deliver_email_notification(notification_id) -> None:
 
     notification.attempts += 1
     try:
-        send_mail(
-            notification.subject,
-            notification.body,
-            settings.DEFAULT_FROM_EMAIL,
-            [notification.recipient_email],
-            fail_silently=False,
+        email_result = send_transactional_email(
+            subject=notification.subject,
+            body=notification.body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_emails=[notification.recipient_email],
+            metadata={
+                "notification_id": str(notification.id),
+                "event_type": notification.event_type,
+                "transfer_id": str(notification.transfer_id),
+                **notification.metadata,
+            },
         )
     except Exception as exc:  # pragma: no cover - backend-specific delivery failure
         notification.status = TransferNotification.Status.FAILED
@@ -157,8 +163,21 @@ def deliver_email_notification(notification_id) -> None:
     notification.status = TransferNotification.Status.SENT
     notification.sent_at = timezone.now()
     notification.error = ""
+    notification.metadata = {
+        **notification.metadata,
+        "email_provider": email_result.provider_name,
+        "email_provider_reference": email_result.provider_reference,
+        "email_provider_response": email_result.response_payload or {},
+    }
     notification.save(
-        update_fields=("attempts", "status", "sent_at", "error", "updated_at"),
+        update_fields=(
+            "attempts",
+            "status",
+            "sent_at",
+            "error",
+            "metadata",
+            "updated_at",
+        ),
     )
 
 

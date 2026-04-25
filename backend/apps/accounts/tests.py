@@ -17,7 +17,7 @@ from rest_framework.authtoken.models import Token
 from apps.countries.models import Country, Currency
 from common.security import decrypt_bytes
 
-from .models import SenderDocument, SenderProfile
+from .models import SenderDocument, SenderKycCheck, SenderProfile
 
 
 User = get_user_model()
@@ -198,6 +198,32 @@ class SenderKycFlowTests(APITestCase):
         self.assertEqual(self.profile.kyc_status, SenderProfile.KycStatus.PENDING)
         self.assertIsNotNone(self.profile.kyc_submitted_at)
         self.assertEqual(response.data["kyc_status"], SenderProfile.KycStatus.PENDING)
+        kyc_check = self.profile.kyc_checks.get()
+        self.assertEqual(kyc_check.provider_name, "manual_kyc_review")
+        self.assertEqual(kyc_check.status, SenderKycCheck.Status.SKIPPED)
+
+    @override_settings(
+        KYC_PROVIDER="external_kyc",
+        KYC_PROVIDER_CONFIGS={
+            "external_kyc": {
+                "display_name": "External KYC",
+                "api_key": "secret-kyc-key",
+            },
+        },
+    )
+    def test_customer_kyc_submit_records_configured_provider_check(self):
+        self.client.force_authenticate(self.customer)
+
+        response = self.client.post(reverse("sender-kyc-submit"), format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        kyc_check = self.profile.kyc_checks.get()
+        self.assertEqual(kyc_check.provider_name, "external_kyc")
+        self.assertEqual(kyc_check.status, SenderKycCheck.Status.SUBMITTED)
+        self.assertTrue(
+            kyc_check.request_payload["provider_config"]["api_key_configured"],
+        )
+        self.assertNotIn("secret-kyc-key", str(kyc_check.request_payload))
 
     def test_kyc_submit_requires_complete_sender_profile(self):
         self.profile.phone_number = ""

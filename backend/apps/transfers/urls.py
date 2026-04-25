@@ -10,6 +10,7 @@ from .views import (
     StaffTransferPayoutRetryView,
     StaffTransferPayoutReverseView,
     StaffTransferPayoutStatusSyncView,
+    StaffTransferReportView,
     StaffTransferSanctionsCheckReviewView,
     StaffTransferStatusTransitionView,
     TransferDetailView,
@@ -39,6 +40,11 @@ urlpatterns = [
         "operations/",
         StaffTransferListView.as_view(),
         name="transfer-operations-list",
+    ),
+    path(
+        "operations/reports/",
+        StaffTransferReportView.as_view(),
+        name="transfer-operations-reports",
     ),
     path("<uuid:pk>/funding/", TransferFundingView.as_view(), name="transfer-funding"),
     path(

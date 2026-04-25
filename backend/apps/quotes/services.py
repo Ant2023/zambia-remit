@@ -10,7 +10,11 @@ from apps.countries.services import (
     validate_payout_method_choice,
 )
 
-from .fx_sources import get_fx_fallback_sources, get_fx_rate_source
+from .fx_sources import (
+    DATABASE_FX_SOURCE,
+    get_fx_fallback_sources,
+    get_fx_rate_source,
+)
 from .models import FeeRule
 
 
@@ -22,6 +26,10 @@ fx_logger = logging.getLogger("mbongopay.fx")
 class RateResult:
     corridor: CountryCorridor
     exchange_rate: Decimal
+    rate_source: str
+    rate_provider_name: str
+    is_primary_rate: bool
+    is_live_rate: bool
 
 
 def get_rate_for_corridor(corridor: CountryCorridor) -> RateResult:
@@ -61,10 +69,21 @@ def get_rate_for_corridor(corridor: CountryCorridor) -> RateResult:
             return RateResult(
                 corridor=corridor,
                 exchange_rate=fallback_result.exchange_rate,
+                rate_source=fallback_source.code,
+                rate_provider_name=fallback_result.provider_name,
+                is_primary_rate=False,
+                is_live_rate=fallback_source.code != DATABASE_FX_SOURCE,
             )
         raise
 
-    return RateResult(corridor=corridor, exchange_rate=rate_result.exchange_rate)
+    return RateResult(
+        corridor=corridor,
+        exchange_rate=rate_result.exchange_rate,
+        rate_source=primary_source.code,
+        rate_provider_name=rate_result.provider_name,
+        is_primary_rate=True,
+        is_live_rate=primary_source.code != DATABASE_FX_SOURCE,
+    )
 
 
 def get_active_corridor(source_country_id: str, destination_country_id: str):

@@ -21,7 +21,30 @@ function getAccountLabel(session: AuthSession | null) {
   return name || session?.user.email || "";
 }
 
-export function AppNavbar() {
+const DEFAULT_PUBLIC_FLAG_RIBBON_ITEMS = [
+  { src: "/flags/us.svg", label: "United States" },
+  { src: "/flags/gb.svg", label: "United Kingdom" },
+  { src: "/flags/de.svg", label: "Germany" },
+  { src: "/flags/zm.svg", label: "Zambia" },
+  { src: "/flags/us.svg", label: "United States" },
+  { src: "/flags/gb.svg", label: "United Kingdom" },
+  { src: "/flags/de.svg", label: "Germany" },
+  { src: "/flags/zm.svg", label: "Zambia" },
+  { src: "/flags/us.svg", label: "United States" },
+  { src: "/flags/gb.svg", label: "United Kingdom" },
+  { src: "/flags/de.svg", label: "Germany" },
+  { src: "/flags/zm.svg", label: "Zambia" },
+];
+
+type AppNavbarProps = {
+  flagRibbonItems?: Array<{
+    label: string;
+    src: string;
+  }>;
+  variant?: "app" | "home";
+};
+
+export function AppNavbar({ flagRibbonItems, variant = "app" }: AppNavbarProps) {
   const router = useRouter();
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -91,10 +114,26 @@ export function AppNavbar() {
 
   const isStaff = Boolean(authSession?.user.is_staff);
   const startHref = isStaff ? "/operations" : authSession ? "/send?new=1" : "/start";
-  const accountLabel = getAccountLabel(authSession);
+  const transferStartHref = authSession ? "/send" : "/start";
+  const isHomeVariant = variant === "home";
+  const accountLabel = isHomeVariant
+    ? authSession?.user.email || getAccountLabel(authSession)
+    : getAccountLabel(authSession);
+  const publicAnchorPrefix = flagRibbonItems ? "" : "/";
+  const renderedFlagRibbonItems = isHomeVariant
+    ? (flagRibbonItems ?? DEFAULT_PUBLIC_FLAG_RIBBON_ITEMS)
+    : flagRibbonItems;
 
   return (
-    <header className="premium-nav">
+    <header
+      className={[
+        "premium-nav",
+        isHomeVariant ? "premium-nav-home" : "",
+        isMobileMenuOpen ? "premium-nav-open" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
       <div className="premium-nav-inner">
         <Link className="premium-brand" href="/">
           <span className="brand-mark">MP</span>
@@ -105,19 +144,30 @@ export function AppNavbar() {
         </Link>
 
         <nav className="premium-links" aria-label="Primary navigation">
-          <Link href="/">Home</Link>
-          {isStaff ? (
-            <Link href="/operations">Operations</Link>
+          {isHomeVariant ? (
+            <>
+              <Link href={`${publicAnchorPrefix}#how-it-works`}>How it works</Link>
+              <Link href={`${publicAnchorPrefix}#preview`}>Rates</Link>
+              <Link href={`${publicAnchorPrefix}#trust`}>Security</Link>
+              <Link href="/help">Help</Link>
+            </>
           ) : (
             <>
-              <Link href="/dashboard">Dashboard</Link>
-              <Link href={startHref}>Send</Link>
-              <Link href="/recipients">Recipients</Link>
-              <Link href="/profile">Account</Link>
-              <Link href="/history">History</Link>
+              <Link href="/">Home</Link>
+              {isStaff ? (
+                <Link href="/operations">Operations</Link>
+              ) : (
+                <>
+                  <Link href="/dashboard">Dashboard</Link>
+                  <Link href={startHref}>Send</Link>
+                  <Link href="/recipients">Recipients</Link>
+                  <Link href="/profile">Account</Link>
+                  <Link href="/history">History</Link>
+                </>
+              )}
+              <Link href="/help">Help</Link>
             </>
           )}
-          <Link href="/help">Help</Link>
         </nav>
 
         <div className="premium-actions">
@@ -140,7 +190,7 @@ export function AppNavbar() {
               >
                 Log in
               </Link>
-              <Link className="nav-button solid" href="/start">
+              <Link className="nav-button solid" href={isHomeVariant ? transferStartHref : "/start"}>
                 Get started
               </Link>
             </>
@@ -162,47 +212,128 @@ export function AppNavbar() {
 
       {isMobileMenuOpen ? (
         <div className="premium-mobile-menu">
-          <Link href="/" onClick={() => setIsMobileMenuOpen(false)}>
-            Home
-          </Link>
-          {isStaff ? (
-            <Link href="/operations" onClick={() => setIsMobileMenuOpen(false)}>
-              Operations
-            </Link>
+          {!isHomeVariant ? (
+            <div className="premium-mobile-menu-header">
+              <Link
+                className="premium-mobile-menu-brand"
+                href="/"
+                onClick={() => setIsMobileMenuOpen(false)}
+              >
+                <span className="brand-mark">MP</span>
+                <span>
+                  <span className="brand-name">MbongoPay</span>
+                  <span className="brand-subtitle">Cross-border money transfers</span>
+                </span>
+              </Link>
+              <button
+                type="button"
+                className="premium-mobile-menu-close"
+                aria-label="Close menu"
+                onClick={() => setIsMobileMenuOpen(false)}
+              >
+                <span />
+                <span />
+              </button>
+            </div>
+          ) : null}
+
+          {isHomeVariant ? (
+            <>
+              <Link
+                href={`${publicAnchorPrefix}#how-it-works`}
+                onClick={() => setIsMobileMenuOpen(false)}
+              >
+                How it works
+              </Link>
+              <Link
+                href={`${publicAnchorPrefix}#preview`}
+                onClick={() => setIsMobileMenuOpen(false)}
+              >
+                Rates
+              </Link>
+              <Link
+                href={`${publicAnchorPrefix}#trust`}
+                onClick={() => setIsMobileMenuOpen(false)}
+              >
+                Security
+              </Link>
+              <Link href="/help" onClick={() => setIsMobileMenuOpen(false)}>
+                Help
+              </Link>
+            </>
           ) : (
             <>
-              <Link href="/dashboard" onClick={() => setIsMobileMenuOpen(false)}>
-                Dashboard
+              <Link href="/" onClick={() => setIsMobileMenuOpen(false)}>
+                Home
               </Link>
-              <Link href={startHref} onClick={() => setIsMobileMenuOpen(false)}>
-                Send
-              </Link>
-              <Link href="/recipients" onClick={() => setIsMobileMenuOpen(false)}>
-                Recipients
-              </Link>
-              <Link href="/profile" onClick={() => setIsMobileMenuOpen(false)}>
-                Account
-              </Link>
-              <Link href="/history" onClick={() => setIsMobileMenuOpen(false)}>
-                History
+              {isStaff ? (
+                <Link href="/operations" onClick={() => setIsMobileMenuOpen(false)}>
+                  Operations
+                </Link>
+              ) : (
+                <>
+                  <Link href="/dashboard" onClick={() => setIsMobileMenuOpen(false)}>
+                    Dashboard
+                  </Link>
+                  <Link href={startHref} onClick={() => setIsMobileMenuOpen(false)}>
+                    Send
+                  </Link>
+                  <Link href="/recipients" onClick={() => setIsMobileMenuOpen(false)}>
+                    Recipients
+                  </Link>
+                  <Link href="/profile" onClick={() => setIsMobileMenuOpen(false)}>
+                    Account
+                  </Link>
+                  <Link href="/history" onClick={() => setIsMobileMenuOpen(false)}>
+                    History
+                  </Link>
+                </>
+              )}
+              <Link href="/help" onClick={() => setIsMobileMenuOpen(false)}>
+                Help
               </Link>
             </>
           )}
-          <Link href="/help" onClick={() => setIsMobileMenuOpen(false)}>
-            Help
-          </Link>
           {authSession ? (
             <button type="button" onClick={handleLogout}>
               Log out
             </button>
           ) : (
-            <Link
-              href="/login?mode=login&next=/send"
-              onClick={() => setIsMobileMenuOpen(false)}
-            >
-              Log in
-            </Link>
+            <div className={isHomeVariant ? undefined : "premium-mobile-menu-actions"}>
+              <Link
+                href="/login?mode=login&next=/send"
+                onClick={() => setIsMobileMenuOpen(false)}
+              >
+                Log in
+              </Link>
+              {isHomeVariant ? (
+                <Link
+                  className="premium-mobile-menu-signin"
+                  href="/login?mode=login&next=/send"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                >
+                  Sign up
+                </Link>
+              ) : null}
+              {!isHomeVariant ? (
+                <Link href="/start" onClick={() => setIsMobileMenuOpen(false)}>
+                  Get started
+                </Link>
+              ) : null}
+            </div>
           )}
+        </div>
+      ) : null}
+
+      {renderedFlagRibbonItems ? (
+        <div className="country-flag-ribbon" aria-hidden="true">
+          <div className="country-flag-track">
+            {renderedFlagRibbonItems.map((item, index) => (
+              <div className="country-flag-chip" key={`${item.label}-${index}`}>
+                <img src={item.src} alt="" />
+              </div>
+            ))}
+          </div>
         </div>
       ) : null}
     </header>

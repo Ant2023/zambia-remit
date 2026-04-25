@@ -64,6 +64,10 @@ class QuoteSerializer(serializers.ModelSerializer):
             "send_amount",
             "fee_amount",
             "exchange_rate",
+            "rate_source",
+            "rate_provider_name",
+            "is_primary_rate",
+            "is_live_rate",
             "receive_amount",
             "status",
             "expires_at",
@@ -79,6 +83,10 @@ class QuoteSerializer(serializers.ModelSerializer):
             "destination_currency",
             "fee_amount",
             "exchange_rate",
+            "rate_source",
+            "rate_provider_name",
+            "is_primary_rate",
+            "is_live_rate",
             "receive_amount",
             "status",
             "expires_at",
@@ -136,12 +144,20 @@ class QuoteSerializer(serializers.ModelSerializer):
         attrs["corridor"] = corridor
         attrs["recipient"] = recipient
         attrs["backend_exchange_rate"] = rate_result.exchange_rate
+        attrs["backend_rate_source"] = rate_result.rate_source
+        attrs["backend_rate_provider_name"] = rate_result.rate_provider_name
+        attrs["backend_is_primary_rate"] = rate_result.is_primary_rate
+        attrs["backend_is_live_rate"] = rate_result.is_live_rate
         return attrs
 
     def create(self, validated_data):
         request = self.context["request"]
         corridor = validated_data.pop("corridor")
         exchange_rate = validated_data.pop("backend_exchange_rate")
+        rate_source = validated_data.pop("backend_rate_source")
+        rate_provider_name = validated_data.pop("backend_rate_provider_name")
+        is_primary_rate = validated_data.pop("backend_is_primary_rate")
+        is_live_rate = validated_data.pop("backend_is_live_rate")
         send_amount = validated_data["send_amount"]
         payout_method = validated_data["payout_method"]
 
@@ -159,6 +175,10 @@ class QuoteSerializer(serializers.ModelSerializer):
             send_amount=send_amount,
             fee_amount=fee_amount,
             exchange_rate=exchange_rate,
+            rate_source=rate_source,
+            rate_provider_name=rate_provider_name,
+            is_primary_rate=is_primary_rate,
+            is_live_rate=is_live_rate,
             receive_amount=receive_amount,
             expires_at=timezone.now() + timedelta(minutes=15),
         )
@@ -186,6 +206,10 @@ class RateEstimateSerializer(serializers.Serializer):
     source_currency = CurrencySerializer()
     destination_currency = CurrencySerializer()
     exchange_rate = serializers.DecimalField(max_digits=18, decimal_places=8)
+    rate_source = serializers.CharField()
+    rate_provider_name = serializers.CharField()
+    is_primary_rate = serializers.BooleanField()
+    is_live_rate = serializers.BooleanField()
     min_send_amount = serializers.DecimalField(max_digits=12, decimal_places=2)
     max_send_amount = serializers.DecimalField(max_digits=12, decimal_places=2)
     send_amount = serializers.DecimalField(
@@ -214,7 +238,17 @@ class RateEstimateSerializer(serializers.Serializer):
     )
 
 
-def build_rate_payload(corridor, exchange_rate, send_amount=None, payout_method=None):
+def build_rate_payload(
+    corridor,
+    exchange_rate,
+    *,
+    rate_source,
+    rate_provider_name,
+    is_primary_rate,
+    is_live_rate,
+    send_amount=None,
+    payout_method=None,
+):
     fee_amount = None
     receive_amount = None
     total_amount = None
@@ -237,6 +271,10 @@ def build_rate_payload(corridor, exchange_rate, send_amount=None, payout_method=
         "source_currency": corridor.source_currency,
         "destination_currency": corridor.destination_currency,
         "exchange_rate": exchange_rate,
+        "rate_source": rate_source,
+        "rate_provider_name": rate_provider_name,
+        "is_primary_rate": is_primary_rate,
+        "is_live_rate": is_live_rate,
         "min_send_amount": corridor.min_send_amount,
         "max_send_amount": corridor.max_send_amount,
         "send_amount": send_amount,

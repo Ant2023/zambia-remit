@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { AppNavbar } from "@/components/AppNavbar";
+import { Button, Card, Input, MobileContainer, StatusBadge } from "@/components/ui";
 import {
   ApiError,
   formatApiError,
@@ -153,80 +154,97 @@ export default function LoginPage() {
 
   return (
     <>
-      <AppNavbar />
-      <main className="auth-page">
-        <section className="auth-shell">
-        <div className="auth-card auth-card-wide">
-          <div className="auth-icon">MP</div>
-          <p className="auth-eyebrow">Customer access</p>
-          <h1>{mode === "login" ? "Log in" : "Create account"}</h1>
-          <p className="auth-copy">
-            {mode === "login"
-              ? "Use a customer account to send money, fund transactions, and track transfer status."
-              : "Create your account with email and password, then continue to the send-money flow."}
-          </p>
-
-          <div className="auth-tabs">
-            <button
-              type="button"
-              className={mode === "login" ? "active" : ""}
-              onClick={() => setMode("login")}
-            >
-              Log in
-            </button>
-            <button
-              type="button"
-              className={mode === "register" ? "active" : ""}
-              onClick={() => setMode("register")}
-            >
-              Create account
-            </button>
+      <AppNavbar variant="home" />
+      <MobileContainer className="login-modern-shell max-w-[520px] space-y-5 py-6 sm:py-10">
+        <div className="login-modern-form-column">
+          <Card className="login-modern-card space-y-6">
+          <div className="login-modern-heading space-y-4 text-center">
+            <div className="login-modern-title-block space-y-2">
+              <StatusBadge tone="info">
+                {mode === "login" ? "Log in" : "Create account"}
+              </StatusBadge>
+              <p className="mx-auto max-w-sm text-sm leading-6 text-mbongo-muted">
+                {mode === "login"
+                  ? "Use your customer account to send money, fund transfers, and track delivery."
+                  : "Create your secure account, then continue to the send-money flow."}
+              </p>
+            </div>
           </div>
 
-          <form className="auth-form" onSubmit={handleSubmit} noValidate>
-            {mode === "register" ? (
-              <div className="form-grid">
-                <label>
-                  First name
-                  <input
-                    name="first_name"
-                    autoComplete="given-name"
-                    required
-                  />
-                </label>
+          <div className="login-modern-tabs grid grid-cols-2 rounded-xl bg-mbongo-bg p-1">
+            <Button
+              data-active={mode === "login"}
+              className={
+                mode === "login"
+                  ? "min-h-11 w-full bg-white text-mbongo-navy shadow-sm hover:bg-white"
+                  : "min-h-11 w-full border-0 bg-transparent text-mbongo-muted hover:bg-white/70"
+              }
+              onClick={() => setMode("login")}
+              type="button"
+              variant="secondary"
+            >
+              Log in
+            </Button>
+            <Button
+              data-active={mode === "register"}
+              className={
+                mode === "register"
+                  ? "min-h-11 w-full bg-white text-mbongo-navy shadow-sm hover:bg-white"
+                  : "min-h-11 w-full border-0 bg-transparent text-mbongo-muted hover:bg-white/70"
+              }
+              onClick={() => setMode("register")}
+              type="button"
+              variant="secondary"
+            >
+              Create account
+            </Button>
+          </div>
 
-                <label>
-                  Last name
-                  <input
-                    name="last_name"
-                    autoComplete="family-name"
-                    required
-                  />
-                </label>
+          <form className="login-modern-form" onSubmit={handleSubmit} noValidate>
+            {mode === "register" ? (
+              <div className="login-modern-name-grid">
+                <Input
+                  autoComplete="given-name"
+                  label="First name"
+                  name="first_name"
+                  required
+                />
+
+                <Input
+                  autoComplete="family-name"
+                  label="Last name"
+                  name="last_name"
+                  required
+                />
               </div>
             ) : null}
 
-            <label>
-              Email
-              <input name="email" type="email" autoComplete="email" required />
-            </label>
+            <Input
+              autoComplete="email"
+              label="Email"
+              name="email"
+              required
+              type="email"
+            />
 
-            <label>
-              Password
-              <span className="password-field">
-                <input
-                  name="password"
-                  type={showPassword ? "text" : "password"}
+            <label className="mbp-label">
+              <span>Password</span>
+              <span className="login-modern-password-field">
+                <Input
                   autoComplete={
                     mode === "login" ? "current-password" : "new-password"
                   }
+                  className="login-modern-password-input pr-12"
+                  name="password"
                   required
+                  type={showPassword ? "text" : "password"}
                 />
                 <button
                   type="button"
-                  className="password-toggle"
+                  className="login-modern-password-toggle"
                   aria-label={showPassword ? "Hide password" : "Show password"}
                   aria-pressed={showPassword}
+                  onMouseDown={(event) => event.preventDefault()}
                   onClick={() => setShowPassword((current) => !current)}
                 >
                   <EyeIcon hidden={showPassword} />
@@ -235,30 +253,35 @@ export default function LoginPage() {
             </label>
 
             {mode === "login" ? (
-              <Link className="text-link small" href="/forgot-password">
+              <Link
+                className="login-modern-link justify-self-start text-sm font-semibold text-mbongo-teal hover:text-mbongo-navy"
+                href="/forgot-password"
+              >
                 Forgot your password?
               </Link>
             ) : null}
 
             {mode === "register" ? (
-              <label>
-                Confirm password
-                <span className="password-field">
-                  <input
-                    name="password_confirm"
-                    type={showPasswordConfirm ? "text" : "password"}
+              <label className="mbp-label">
+                <span>Confirm password</span>
+                <span className="login-modern-password-field">
+                  <Input
                     autoComplete="new-password"
+                    className="login-modern-password-input pr-12"
+                    name="password_confirm"
                     required
+                    type={showPasswordConfirm ? "text" : "password"}
                   />
                   <button
                     type="button"
-                    className="password-toggle"
+                    className="login-modern-password-toggle"
                     aria-label={
                       showPasswordConfirm
                         ? "Hide password confirmation"
                         : "Show password confirmation"
                     }
                     aria-pressed={showPasswordConfirm}
+                    onMouseDown={(event) => event.preventDefault()}
                     onClick={() =>
                       setShowPasswordConfirm((current) => !current)
                     }
@@ -269,45 +292,66 @@ export default function LoginPage() {
               </label>
             ) : null}
 
-            {error ? <pre className="error small">{error}</pre> : null}
-
-            {showExistingAccountPrompt ? (
-              <div className="auth-existing-account">
-                <p>Use your existing account to continue.</p>
-                <button
-                  type="button"
-                  className="auth-secondary-action"
-                  onClick={switchToExistingAccountLogin}
-                >
-                  Sign in to existing account
-                </button>
+            {error ? (
+              <div className="login-modern-error">
+                <pre className="whitespace-pre-wrap text-sm font-semibold leading-6 text-mbongo-error">
+                  {error}
+                </pre>
               </div>
             ) : null}
 
-            <button
-              type="submit"
-              className="auth-submit-button"
-              disabled={loading}
-            >
+            {showExistingAccountPrompt ? (
+              <div className="login-modern-prompt">
+                <p className="text-sm font-semibold text-mbongo-navy">
+                  Use your existing account to continue.
+                </p>
+                <Button
+                  fullWidth
+                  onClick={switchToExistingAccountLogin}
+                  type="button"
+                  variant="secondary"
+                >
+                  Sign in to existing account
+                </Button>
+              </div>
+            ) : null}
+
+            <Button disabled={loading} fullWidth size="lg" type="submit">
               {loading
                 ? "Please wait..."
                 : mode === "login"
                   ? "Log in"
                   : "Create customer account"}
-            </button>
+            </Button>
           </form>
 
-          <p className="auth-note">
-            Staff and admin accounts can use the{" "}
-            <Link href="/operations">operations console</Link>.
+          <p className="login-modern-note text-center text-sm leading-6 text-mbongo-muted">
+            Staff and admin accounts can use{" "}
+            <Link
+              className="login-modern-link font-semibold text-mbongo-teal hover:text-mbongo-navy"
+              href="/operations"
+            >
+              operations console
+            </Link>
+            .
           </p>
+        </Card>
+
+        <div className="login-modern-support-strip">
+          <span>Need help?</span>
+          <Link className="login-modern-link" href="/help">
+            Help Center
+          </Link>
         </div>
 
-        <Link className="auth-back-link" href="/">
+        <Link
+          className="login-modern-back block text-center text-sm font-semibold text-mbongo-teal hover:text-mbongo-navy"
+          href="/"
+        >
           Back to homepage
         </Link>
-        </section>
-      </main>
+        </div>
+      </MobileContainer>
     </>
   );
 }

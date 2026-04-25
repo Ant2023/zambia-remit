@@ -3,6 +3,10 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppNavbar } from "@/components/AppNavbar";
+import {
+  getCustomerStatusLabel,
+  TransferStatusStepper,
+} from "@/components/TransferStatusStepper";
 import type { AuthSession, Transfer } from "@/lib/api";
 import { formatApiError, getTransfer } from "@/lib/api";
 import { getStoredAuthSession } from "@/lib/auth";
@@ -77,7 +81,7 @@ export default function TransferDetailPage() {
             <p className="kicker">Transaction</p>
             <h1>{transfer?.reference ?? "Transaction detail"}</h1>
             <p className="lede">
-              View transaction status, funding progress, and status history.
+              View your live transaction status and transfer details.
             </p>
             <Link className="text-link" href="/history">
               Back to history
@@ -119,11 +123,11 @@ export default function TransferDetailPage() {
                   </div>
                   <div>
                     <dt>Status</dt>
-                    <dd>{transfer.status_display}</dd>
+                    <dd>{getCustomerStatusLabel(transfer)}</dd>
                   </div>
                   <div>
-                    <dt>Funding</dt>
-                    <dd>{transfer.funding_status_display}</dd>
+                    <dt>Started</dt>
+                    <dd>{formatDate(transfer.created_at)}</dd>
                   </div>
                   <div>
                     <dt>Send amount</dt>
@@ -162,20 +166,12 @@ export default function TransferDetailPage() {
           </section>
 
           <section className="panel stack">
-            <h2>Status history</h2>
+            <h2>Transaction status</h2>
 
-            {transfer?.status_events.length ? (
-              <ol className="event-list">
-                {transfer.status_events.map((event) => (
-                  <li key={event.id}>
-                    <strong>{event.to_status_display}</strong>
-                    <span>{formatDate(event.created_at)}</span>
-                    {event.note ? <p>{event.note}</p> : null}
-                  </li>
-                ))}
-              </ol>
+            {transfer ? (
+              <TransferStatusStepper transfer={transfer} />
             ) : (
-              <p className="muted">No status events found yet.</p>
+              <p className="muted">Load the transaction to view status.</p>
             )}
           </section>
         </div>

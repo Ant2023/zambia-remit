@@ -50,6 +50,10 @@ class RateEstimateView(APIView):
         payload = build_rate_payload(
             corridor=rate_result.corridor,
             exchange_rate=rate_result.exchange_rate,
+            rate_source=rate_result.rate_source,
+            rate_provider_name=rate_result.rate_provider_name,
+            is_primary_rate=rate_result.is_primary_rate,
+            is_live_rate=rate_result.is_live_rate,
             send_amount=data.get("send_amount"),
             payout_method=data.get("payout_method"),
         )

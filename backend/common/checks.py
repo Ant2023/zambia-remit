@@ -104,4 +104,20 @@ def production_hardening_checks(app_configs, **kwargs):
                 ),
             )
 
+        if getattr(settings, "KYC_PROVIDER", "") == "manual_kyc_review":
+            errors.append(
+                Warning(
+                    "KYC_PROVIDER is using manual review only in production.",
+                    id="mbongopay.W005",
+                ),
+            )
+
+        if getattr(settings, "SANCTIONS_AML_PROVIDER", "") == "manual_sanctions_review":
+            errors.append(
+                Warning(
+                    "SANCTIONS_AML_PROVIDER is using manual review only in production.",
+                    id="mbongopay.W006",
+                ),
+            )
+
     return errors

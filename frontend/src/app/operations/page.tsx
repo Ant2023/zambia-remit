@@ -762,6 +762,14 @@ export default function OperationsPage() {
     ) ?? selectedTransfer?.sanctions_checks[0];
   const latestPaymentInstruction = selectedTransfer?.latest_payment_instruction;
   const latestPayoutAttempt = selectedTransfer?.latest_payout_attempt;
+  const needsManualReview =
+    selectedTransfer?.status === "funding_received" ||
+    selectedTransfer?.status === "under_review";
+  const needsPayoutAttention =
+    selectedTransfer?.status === "approved" ||
+    selectedTransfer?.status === "processing_payout" ||
+    latestPayoutAttempt?.status === "submitted" ||
+    latestPayoutAttempt?.status === "processing";
 
   useEffect(() => {
     if (!selectedAmlFlag) {
@@ -1269,8 +1277,16 @@ export default function OperationsPage() {
                         </div>
                       </dl>
 
-                      <section className="stack">
-                        <h3>Payment</h3>
+                      <details className="case-collapsible">
+                        <summary>
+                          <span>Payment</span>
+                          <small>
+                            {latestPaymentInstruction
+                              ? latestPaymentInstruction.status_display
+                              : "Not prepared"}
+                          </small>
+                        </summary>
+                        <section className="stack case-collapsible-body">
                         {latestPaymentInstruction ? (
                           <>
                             <dl className="summary-list">
@@ -1383,10 +1399,24 @@ export default function OperationsPage() {
                             No payment instruction has been prepared yet.
                           </p>
                         )}
-                      </section>
+                        </section>
+                      </details>
 
-                      <section className="stack">
-                        <h3>Payout</h3>
+                      <section
+                        className="stack case-primary-panel"
+                        data-attention={needsPayoutAttention ? "true" : "false"}
+                      >
+                        <div className="case-section-heading">
+                          <div>
+                            <p className="kicker">Primary action</p>
+                            <h3>Payout</h3>
+                          </div>
+                          <span className="status-pill" data-tone="warning">
+                            {latestPayoutAttempt
+                              ? latestPayoutAttempt.status_display
+                              : selectedTransfer.payout_status_display}
+                          </span>
+                        </div>
                         <dl className="summary-list">
                           <div>
                             <dt>Provider</dt>
@@ -1550,46 +1580,60 @@ export default function OperationsPage() {
                               </form>
                             ) : null}
 
-                            {selectedTransfer.payout_attempts.length ? (
-                              <ol className="event-list">
-                                {selectedTransfer.payout_attempts.map((attempt) => (
-                                  <li key={attempt.id}>
-                                    <strong>
-                                      Attempt {attempt.attempt_number} -{" "}
-                                      {attempt.status_display}
-                                    </strong>
-                                    <span>{formatDate(attempt.created_at)}</span>
-                                    <p>
-                                      {attempt.provider.name} -{" "}
-                                      {formatMoney(
-                                        attempt.amount,
-                                        attempt.currency.code,
-                                      )}
-                                    </p>
-                                    {attempt.status_reason ? (
-                                      <p>{attempt.status_reason}</p>
-                                    ) : null}
-                                  </li>
-                                ))}
-                              </ol>
-                            ) : null}
+                            {selectedTransfer.payout_attempts.length ||
+                            selectedTransfer.payout_events.length ? (
+                              <details className="case-collapsible case-collapsible-nested">
+                                <summary>
+                                  <span>Payout history</span>
+                                  <small>
+                                    {selectedTransfer.payout_attempts.length} attempts
+                                  </small>
+                                </summary>
+                                <div className="stack case-collapsible-body">
+                                  {selectedTransfer.payout_attempts.length ? (
+                                    <ol className="event-list">
+                                      {selectedTransfer.payout_attempts.map((attempt) => (
+                                        <li key={attempt.id}>
+                                          <strong>
+                                            Attempt {attempt.attempt_number} -{" "}
+                                            {attempt.status_display}
+                                          </strong>
+                                          <span>{formatDate(attempt.created_at)}</span>
+                                          <p>
+                                            {attempt.provider.name} -{" "}
+                                            {formatMoney(
+                                              attempt.amount,
+                                              attempt.currency.code,
+                                            )}
+                                          </p>
+                                          {attempt.status_reason ? (
+                                            <p>{attempt.status_reason}</p>
+                                          ) : null}
+                                        </li>
+                                      ))}
+                                    </ol>
+                                  ) : null}
 
-                            {selectedTransfer.payout_events.length ? (
-                              <ol className="event-list">
-                                {selectedTransfer.payout_events.map((event) => (
-                                  <li key={event.id}>
-                                    <strong>{event.action_display}</strong>
-                                    <span>{formatDate(event.created_at)}</span>
-                                    <p>
-                                      {event.from_payout_status
-                                        ? `${event.from_payout_status} to `
-                                        : ""}
-                                      {event.to_payout_status || "No status change"}
-                                    </p>
-                                    {event.note ? <p>{event.note}</p> : null}
-                                  </li>
-                                ))}
-                              </ol>
+                                  {selectedTransfer.payout_events.length ? (
+                                    <ol className="event-list">
+                                      {selectedTransfer.payout_events.map((event) => (
+                                        <li key={event.id}>
+                                          <strong>{event.action_display}</strong>
+                                          <span>{formatDate(event.created_at)}</span>
+                                          <p>
+                                            {event.from_payout_status
+                                              ? `${event.from_payout_status} to `
+                                              : ""}
+                                            {event.to_payout_status ||
+                                              "No status change"}
+                                          </p>
+                                          {event.note ? <p>{event.note}</p> : null}
+                                        </li>
+                                      ))}
+                                    </ol>
+                                  ) : null}
+                                </div>
+                              </details>
                             ) : null}
                           </>
                         ) : (
@@ -1599,8 +1643,14 @@ export default function OperationsPage() {
                         )}
                       </section>
 
-                      <section className="stack">
-                        <h3>Compliance flags</h3>
+                      <details className="case-collapsible">
+                        <summary>
+                          <span>Compliance flags</span>
+                          <small>
+                            {selectedTransfer.compliance_flags.length || "None"}
+                          </small>
+                        </summary>
+                        <section className="stack case-collapsible-body">
                         {selectedTransfer.compliance_flags.length ? (
                           <div className="compliance-flag-list">
                             {selectedTransfer.compliance_flags.map((flag) => (
@@ -1626,10 +1676,15 @@ export default function OperationsPage() {
                             No compliance flags are attached to this transfer.
                           </p>
                         )}
-                      </section>
+                        </section>
+                      </details>
 
-                      <section className="stack">
-                        <h3>AML monitoring</h3>
+                      <details className="case-collapsible" open={amlFlags.length > 0}>
+                        <summary>
+                          <span>AML monitoring</span>
+                          <small>{amlFlags.length || "None"}</small>
+                        </summary>
+                        <section className="stack case-collapsible-body">
                         {amlFlags.length ? (
                           <>
                             <div className="compliance-flag-list">
@@ -1735,10 +1790,25 @@ export default function OperationsPage() {
                             No AML monitoring alerts are attached to this transfer.
                           </p>
                         )}
-                      </section>
+                        </section>
+                      </details>
 
-                      <section className="stack">
-                        <h3>Sanctions screening</h3>
+                      <details
+                        className="case-collapsible"
+                        open={selectedTransfer.sanctions_checks.some(
+                          (check) =>
+                            check.status === "possible_match" ||
+                            check.status === "confirmed_match" ||
+                            check.status === "error",
+                        )}
+                      >
+                        <summary>
+                          <span>Sanctions screening</span>
+                          <small>
+                            {selectedTransfer.sanctions_checks.length || "None"}
+                          </small>
+                        </summary>
+                        <section className="stack case-collapsible-body">
                         {selectedTransfer.sanctions_checks.length ? (
                           <>
                             <div className="compliance-flag-list">
@@ -1864,10 +1934,18 @@ export default function OperationsPage() {
                             No sanctions checks have been queued yet.
                           </p>
                         )}
-                      </section>
+                        </section>
+                      </details>
 
-                      <section className="stack">
-                        <h3>Compliance actions</h3>
+                      <details
+                        className="case-collapsible"
+                        open={selectedTransfer.compliance_status !== "clear"}
+                      >
+                        <summary>
+                          <span>Compliance actions</span>
+                          <small>{selectedTransfer.compliance_status_display}</small>
+                        </summary>
+                        <section className="stack case-collapsible-body">
                         <form className="stack" onSubmit={handleComplianceAction}>
                           <label>
                             Action
@@ -1904,51 +1982,73 @@ export default function OperationsPage() {
                               : "Record compliance action"}
                           </button>
                         </form>
-                      </section>
+                        </section>
+                      </details>
 
-                      {allowedNextStatuses.length > 0 ? (
-                        <form className="stack" onSubmit={handleTransition}>
-                          <label>
-                            Next status
-                            <select
-                              value={transitionStatus}
-                              onChange={(event) =>
-                                setTransitionStatus(event.target.value)
-                              }
-                            >
-                              {allowedNextStatuses.map((option) => (
-                                <option key={option.status} value={option.status}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
+                      <details
+                        className="case-collapsible"
+                        open={needsManualReview}
+                      >
+                        <summary>
+                          <span>Manual status action</span>
+                          <small>
+                            {allowedNextStatuses.length
+                              ? `${allowedNextStatuses.length} available`
+                              : "None"}
+                          </small>
+                        </summary>
+                        <div className="case-collapsible-body">
+                          {allowedNextStatuses.length > 0 ? (
+                            <form className="stack" onSubmit={handleTransition}>
+                              <label>
+                                Next status
+                                <select
+                                  value={transitionStatus}
+                                  onChange={(event) =>
+                                    setTransitionStatus(event.target.value)
+                                  }
+                                >
+                                  {allowedNextStatuses.map((option) => (
+                                    <option key={option.status} value={option.status}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
 
-                          <label>
-                            Decision note
-                            <textarea
-                              value={transitionNote}
-                              onChange={(event) =>
-                                setTransitionNote(event.target.value)
-                              }
-                              maxLength={500}
-                              rows={4}
-                              placeholder="Add the review, payout, or exception note"
-                            />
-                          </label>
+                              <label>
+                                Decision note
+                                <textarea
+                                  value={transitionNote}
+                                  onChange={(event) =>
+                                    setTransitionNote(event.target.value)
+                                  }
+                                  maxLength={500}
+                                  rows={4}
+                                  placeholder="Add the review, payout, or exception note"
+                                />
+                              </label>
 
-                          <button type="submit" disabled={transitioning}>
-                            {transitioning ? "Saving..." : "Apply status change"}
-                          </button>
-                        </form>
-                      ) : (
-                        <p className="notice small">
-                          No further status actions are available for this transfer.
-                        </p>
-                      )}
+                              <button type="submit" disabled={transitioning}>
+                                {transitioning ? "Saving..." : "Apply status change"}
+                              </button>
+                            </form>
+                          ) : (
+                            <p className="notice small">
+                              No further status actions are available for this transfer.
+                            </p>
+                          )}
+                        </div>
+                      </details>
 
-                      <section className="stack">
-                        <h3>Compliance activity</h3>
+                      <details className="case-collapsible">
+                        <summary>
+                          <span>Compliance activity</span>
+                          <small>
+                            {selectedTransfer.compliance_events.length || "None"}
+                          </small>
+                        </summary>
+                        <section className="stack case-collapsible-body">
                         {selectedTransfer.compliance_events.length ? (
                           <ol className="event-list">
                             {selectedTransfer.compliance_events.map((event) => (
@@ -1970,10 +2070,17 @@ export default function OperationsPage() {
                             No compliance activity has been recorded yet.
                           </p>
                         )}
-                      </section>
+                        </section>
+                      </details>
 
-                      <section className="stack">
-                        <h3>Status trail</h3>
+                      <details className="case-collapsible">
+                        <summary>
+                          <span>Status trail</span>
+                          <small>
+                            {selectedTransfer.status_events.length || "None"}
+                          </small>
+                        </summary>
+                        <section className="stack case-collapsible-body">
                         {selectedTransfer.status_events.length ? (
                           <ol className="event-list">
                             {selectedTransfer.status_events.map((event) => (
@@ -1987,7 +2094,8 @@ export default function OperationsPage() {
                         ) : (
                           <p className="muted small">No status events found yet.</p>
                         )}
-                      </section>
+                        </section>
+                      </details>
                     </>
                   ) : (
                     <p className="muted">Choose a transfer from the queue.</p>

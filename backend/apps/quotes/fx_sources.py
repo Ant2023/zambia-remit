@@ -365,6 +365,11 @@ def get_fx_rate_source() -> BaseFxRateSource:
 
 def get_fx_fallback_sources(primary_source_code: str) -> list[BaseFxRateSource]:
     normalized_primary = primary_source_code.lower()
-    if normalized_primary in {DATABASE_FX_SOURCE, FRANKFURTER_SOURCE}:
+    if normalized_primary == DATABASE_FX_SOURCE:
         return []
-    return [FrankfurterFxRateSource()]
+
+    fallback_sources: list[BaseFxRateSource] = []
+    if normalized_primary != FRANKFURTER_SOURCE:
+        fallback_sources.append(FrankfurterFxRateSource())
+    fallback_sources.append(DatabaseFxRateSource())
+    return fallback_sources

@@ -41,6 +41,7 @@ from .serializers import (
     PaymentWebhookEventSerializer,
     PayoutWebhookEventCreateSerializer,
     StaffTransferSerializer,
+    StaffReportQuerySerializer,
     TransferAmlFlagReviewSerializer,
     TransferPaymentActionCreateSerializer,
     TransferPaymentInstructionCreateSerializer,
@@ -53,6 +54,7 @@ from .serializers import (
     TransferStatusTransitionSerializer,
     TransferSerializer,
 )
+from .reports import build_operations_report, make_report_window
 from .payouts import (
     retry_payout_attempt,
     reverse_payout_attempt,
@@ -676,6 +678,20 @@ class StaffTransferListView(generics.ListAPIView):
             )
 
         return queryset[:100]
+
+
+class StaffTransferReportView(generics.GenericAPIView):
+    serializer_class = StaffReportQuerySerializer
+    permission_classes = [permissions.IsAdminUser]
+
+    def get(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        start_at, end_at = make_report_window(
+            serializer.validated_data.get("start_date"),
+            serializer.validated_data.get("end_date"),
+        )
+        return Response(build_operations_report(start_at=start_at, end_at=end_at))
 
 
 class StaffTransferStatusTransitionView(generics.GenericAPIView):

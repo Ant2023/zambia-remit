@@ -3,6 +3,11 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AppNavbar } from "@/components/AppNavbar";
+import {
+  getCustomerStatus,
+  getCustomerStatusLabel,
+  TransferStatusStepper,
+} from "@/components/TransferStatusStepper";
 import type { Transfer } from "@/lib/api";
 import { getTransfer } from "@/lib/api";
 import { getStoredAuthSession } from "@/lib/auth";
@@ -107,14 +112,34 @@ function getReceiptContent(transfer: Transfer | null) {
     return {
       kicker: "Transfer receipt",
       title: "Transfer submitted",
-      description: `Reference ${transfer.reference} is now ${transfer.status_display}.`,
+      description: `Reference ${transfer.reference} has been created.`,
+    };
+  }
+
+  const customerStatus = getCustomerStatus(transfer);
+
+  if (customerStatus === "failed") {
+    return {
+      kicker: "Transfer update",
+      title: "Transfer failed",
+      description:
+        paymentReason ||
+        `Reference ${transfer.reference} could not be completed.`,
+    };
+  }
+
+  if (customerStatus === "completed") {
+    return {
+      kicker: "Transfer receipt",
+      title: "Transfer completed",
+      description: `Reference ${transfer.reference} has been completed.`,
     };
   }
 
   return {
     kicker: "Payment receipt",
-    title: "Funding received",
-    description: `Reference ${transfer.reference} is now ${transfer.status_display}.`,
+    title: getCustomerStatusLabel(transfer),
+    description: `Reference ${transfer.reference} is moving to the recipient.`,
   };
 }
 
@@ -204,19 +229,24 @@ export default function SuccessPage() {
               <div className="receipt-status-grid">
                 <div>
                   <span>Status</span>
-                  <strong>{transfer.status_display}</strong>
+                  <strong>{getCustomerStatusLabel(transfer)}</strong>
                 </div>
                 <div>
-                  <span>Funding</span>
-                  <strong>{transfer.funding_status_display}</strong>
+                  <span>Started</span>
+                  <strong>{formatDate(transfer.created_at)}</strong>
                 </div>
                 <div>
-                  <span>Compliance</span>
-                  <strong>{transfer.compliance_status_display}</strong>
+                  <span>Send amount</span>
+                  <strong>
+                    {transfer.send_amount} {transfer.source_currency_details.code}
+                  </strong>
                 </div>
                 <div>
-                  <span>Payout</span>
-                  <strong>{transfer.payout_status_display}</strong>
+                  <span>Recipient gets</span>
+                  <strong>
+                    {transfer.receive_amount}{" "}
+                    {transfer.destination_currency_details.code}
+                  </strong>
                 </div>
               </div>
 
@@ -383,20 +413,8 @@ export default function SuccessPage() {
               </div>
 
               <section className="receipt-panel stack">
-                <h2>Timeline</h2>
-                {transfer.status_events.length ? (
-                  <ol className="event-list">
-                    {transfer.status_events.map((event) => (
-                      <li key={event.id}>
-                        <strong>{event.to_status_display}</strong>
-                        <span>{formatDate(event.created_at)}</span>
-                        {event.note ? <p>{event.note}</p> : null}
-                      </li>
-                    ))}
-                  </ol>
-                ) : (
-                  <p className="muted">No status events found yet.</p>
-                )}
+                <h2>Transaction status</h2>
+                <TransferStatusStepper transfer={transfer} />
               </section>
 
               <div className="receipt-actions">

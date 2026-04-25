@@ -1,3 +1,5 @@
+import logging
+
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
@@ -26,11 +28,14 @@ from .payouts import (
 )
 
 
+transfer_logger = logging.getLogger("mbongopay.transfers")
+
 ALLOWED_STATUS_TRANSITIONS = {
     Transfer.Status.AWAITING_FUNDING: {
         Transfer.Status.CANCELLED,
     },
     Transfer.Status.FUNDING_RECEIVED: {
+        Transfer.Status.APPROVED,
         Transfer.Status.UNDER_REVIEW,
         Transfer.Status.CANCELLED,
         Transfer.Status.FAILED,
@@ -233,6 +238,41 @@ def get_funding_status_for_payment_status(payment_status: str) -> str:
     return Transfer.FundingStatus.PENDING
 
 
+def auto_advance_transfer_after_funding(transfer: Transfer) -> None:
+    transfer.refresh_from_db()
+
+    if transfer.status != Transfer.Status.FUNDING_RECEIVED:
+        return
+
+    if transfer.compliance_status != Transfer.ComplianceStatus.CLEAR:
+        return
+
+    if transfer.payout_status != Transfer.PayoutStatus.NOT_STARTED:
+        return
+
+    if not transfer.payout_provider_id:
+        return
+
+    try:
+        approved_transfer = transition_transfer_status(
+            transfer,
+            Transfer.Status.APPROVED,
+            changed_by=None,
+            note="Auto-approved after funding received for clear compliance transfer.",
+        )
+        submit_payout_for_transfer(
+            approved_transfer,
+            changed_by=None,
+            note="Auto-submitted payout after funding and compliance approval.",
+        )
+    except Exception:
+        transfer_logger.exception(
+            "Auto advance after funding failed transfer_id=%s reference=%s",
+            transfer.id,
+            transfer.reference,
+        )
+
+
 @transaction.atomic
 def apply_payment_instruction_status(
     instruction: TransferPaymentInstruction,
@@ -324,6 +364,7 @@ def apply_payment_instruction_status(
             status_event=status_event,
             note=status_reason or note,
         )
+        auto_advance_transfer_after_funding(transfer)
     elif not is_same_status and target_status in PAYMENT_FAILURE_STATUSES:
         notify_transaction_failed(
             transfer,

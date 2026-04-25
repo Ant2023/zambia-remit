@@ -10,6 +10,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from apps.accounts.models import SenderProfile
 from apps.countries.models import (
     CorridorPayoutMethod,
     CorridorPayoutProvider,
@@ -39,7 +40,7 @@ from .models import (
     TransferRiskRule,
     TransferSanctionsCheck,
 )
-from .services import apply_payment_instruction_status
+from .services import apply_payment_instruction_status, auto_advance_transfer_after_funding
 
 
 User = get_user_model()
@@ -163,6 +164,10 @@ class CoreTransferProductTests(APITestCase):
             send_amount=send_amount,
             fee_amount=Decimal("4.49"),
             exchange_rate=Decimal("25.50000000"),
+            rate_source="database",
+            rate_provider_name="test_rate",
+            is_primary_rate=True,
+            is_live_rate=False,
             receive_amount=(send_amount * Decimal("25.50000000")).quantize(
                 Decimal("0.01"),
             ),
@@ -189,6 +194,10 @@ class CoreTransferProductTests(APITestCase):
             send_amount=quote.send_amount,
             fee_amount=quote.fee_amount,
             exchange_rate=quote.exchange_rate,
+            rate_source=quote.rate_source,
+            rate_provider_name=quote.rate_provider_name,
+            is_primary_rate=quote.is_primary_rate,
+            is_live_rate=quote.is_live_rate,
             receive_amount=quote.receive_amount,
             status=status_value,
         )
@@ -264,14 +273,30 @@ class CoreTransferProductTests(APITestCase):
         self.assertEqual(funding_response.status_code, status.HTTP_200_OK)
         transfer.refresh_from_db()
         instruction = TransferPaymentInstruction.objects.get(id=instruction_id)
-        self.assertEqual(transfer.status, Transfer.Status.FUNDING_RECEIVED)
+        self.assertEqual(transfer.status, Transfer.Status.PROCESSING_PAYOUT)
         self.assertEqual(transfer.funding_status, Transfer.FundingStatus.RECEIVED)
+        self.assertEqual(transfer.compliance_status, Transfer.ComplianceStatus.APPROVED)
+        self.assertEqual(transfer.payout_status, Transfer.PayoutStatus.SUBMITTED)
         self.assertEqual(instruction.status, TransferPaymentInstruction.Status.PAID)
         self.assertTrue(
             transfer.status_events.filter(
                 to_status=Transfer.Status.FUNDING_RECEIVED,
             ).exists(),
         )
+        self.assertTrue(
+            transfer.status_events.filter(
+                to_status=Transfer.Status.APPROVED,
+                note="Auto-approved after funding received for clear compliance transfer.",
+            ).exists(),
+        )
+        self.assertTrue(
+            transfer.status_events.filter(
+                to_status=Transfer.Status.PROCESSING_PAYOUT,
+            ).exists(),
+        )
+        payout_attempt = transfer.payout_attempts.get()
+        self.assertEqual(payout_attempt.provider, self.payout_provider)
+        self.assertEqual(payout_attempt.status, TransferPayoutAttempt.Status.SUBMITTED)
         notification_types = set(
             transfer.notifications.values_list("event_type", flat=True),
         )
@@ -286,6 +311,22 @@ class CoreTransferProductTests(APITestCase):
                 subject=f"Payment received for transfer {transfer.reference}",
             ).exists(),
         )
+
+    def test_auto_advance_after_funding_skips_when_transfer_is_not_low_risk(self):
+        transfer = self.create_transfer(status_value=Transfer.Status.FUNDING_RECEIVED)
+        transfer.compliance_status = Transfer.ComplianceStatus.UNDER_REVIEW
+        transfer.save(update_fields=("compliance_status", "updated_at"))
+
+        auto_advance_transfer_after_funding(transfer)
+
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, Transfer.Status.FUNDING_RECEIVED)
+        self.assertEqual(
+            transfer.compliance_status,
+            Transfer.ComplianceStatus.UNDER_REVIEW,
+        )
+        self.assertEqual(transfer.payout_status, Transfer.PayoutStatus.NOT_STARTED)
+        self.assertFalse(transfer.payout_attempts.exists())
 
     def test_card_payment_instruction_prepares_processor_ready_session(self):
         transfer = self.create_transfer()
@@ -720,8 +761,11 @@ class CoreTransferProductTests(APITestCase):
         instruction.refresh_from_db()
         transfer.refresh_from_db()
         self.assertEqual(instruction.status, TransferPaymentInstruction.Status.PAID)
-        self.assertEqual(transfer.status, Transfer.Status.FUNDING_RECEIVED)
+        self.assertEqual(transfer.status, Transfer.Status.PROCESSING_PAYOUT)
         self.assertEqual(transfer.funding_status, Transfer.FundingStatus.RECEIVED)
+        self.assertEqual(transfer.compliance_status, Transfer.ComplianceStatus.APPROVED)
+        self.assertEqual(transfer.payout_status, Transfer.PayoutStatus.SUBMITTED)
+        self.assertEqual(transfer.payout_attempts.count(), 1)
         event = TransferPaymentWebhookEvent.objects.get(provider_event_id="evt_paid_1")
         self.assertEqual(
             event.processing_status,
@@ -1079,6 +1123,49 @@ class CoreTransferProductTests(APITestCase):
                 event_type=TransferNotification.EventType.PAYOUT_COMPLETE,
             ).exists(),
         )
+
+    @override_settings(
+        PAYOUT_PROVIDER_CONFIGS={
+            "mobile_money_provider": {
+                "display_name": "Mobile money provider",
+                "api_key": "secret-payout-key",
+            },
+        },
+    )
+    def test_configured_payout_provider_receives_external_handoff(self):
+        payout_provider = PayoutProvider.objects.create(
+            code="mobile_money_provider",
+            name="Mobile money provider",
+            payout_method=PayoutMethod.MOBILE_MONEY,
+            metadata={"processor": "external"},
+        )
+        transfer = self.create_transfer(status_value=Transfer.Status.FUNDING_RECEIVED)
+        transfer.payout_provider = payout_provider
+        transfer.save(update_fields=("payout_provider", "updated_at"))
+        self.client.force_authenticate(self.staff)
+
+        for target_status in (
+            Transfer.Status.UNDER_REVIEW,
+            Transfer.Status.APPROVED,
+            Transfer.Status.PROCESSING_PAYOUT,
+        ):
+            response = self.client.post(
+                reverse("transfer-status-transition", kwargs={"pk": transfer.pk}),
+                {"status": target_status, "note": f"Move to {target_status}."},
+                format="json",
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        attempt = transfer.payout_attempts.get()
+        self.assertEqual(attempt.provider, payout_provider)
+        self.assertEqual(
+            attempt.request_payload["integration_mode"],
+            "external_payout_provider",
+        )
+        self.assertTrue(
+            attempt.request_payload["provider_config"]["api_key_configured"],
+        )
+        self.assertNotIn("secret-payout-key", str(attempt.request_payload))
 
     @override_settings(
         PAYOUT_PROVIDER_CONFIGS={
@@ -1489,6 +1576,92 @@ class CoreTransferProductTests(APITestCase):
             "HIGH_AMOUNT",
         )
 
+    def test_staff_operations_reports_include_analytics(self):
+        active_transfer = self.create_transfer(
+            status_value=Transfer.Status.FUNDING_RECEIVED,
+        )
+        completed_transfer = self.create_transfer(
+            status_value=Transfer.Status.COMPLETED,
+        )
+        TransferPaymentInstruction.objects.create(
+            transfer=active_transfer,
+            payment_method=TransferPaymentInstruction.PaymentMethod.DEBIT_CARD,
+            amount=active_transfer.send_amount + active_transfer.fee_amount,
+            currency=self.usd,
+            status=TransferPaymentInstruction.Status.PAID,
+        )
+        TransferPaymentInstruction.objects.create(
+            transfer=completed_transfer,
+            payment_method=TransferPaymentInstruction.PaymentMethod.DEBIT_CARD,
+            amount=completed_transfer.send_amount + completed_transfer.fee_amount,
+            currency=self.usd,
+            status=TransferPaymentInstruction.Status.FAILED,
+        )
+        TransferPayoutAttempt.objects.create(
+            transfer=active_transfer,
+            provider=self.payout_provider,
+            payout_method=PayoutMethod.MOBILE_MONEY,
+            attempt_number=1,
+            amount=active_transfer.receive_amount,
+            currency=self.zmw,
+            status=TransferPayoutAttempt.Status.FAILED,
+        )
+        SenderProfile.objects.create(
+            user=self.sender,
+            phone_number="+12025550123",
+            country=self.us,
+            kyc_status=SenderProfile.KycStatus.VERIFIED,
+            kyc_submitted_at=timezone.now(),
+            kyc_reviewed_at=timezone.now(),
+        )
+        pending_user = User.objects.create_user(
+            email="pending-kyc@example.com",
+            password="test-password-123",
+        )
+        SenderProfile.objects.create(
+            user=pending_user,
+            phone_number="+12025550124",
+            country=self.us,
+            kyc_status=SenderProfile.KycStatus.PENDING,
+            kyc_submitted_at=timezone.now(),
+        )
+        self.client.force_authenticate(self.staff)
+
+        response = self.client.get(reverse("transfer-operations-reports"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["transaction_volume"]["created_count"], 2)
+        self.assertEqual(response.data["transaction_volume"]["completed_count"], 1)
+        self.assertEqual(response.data["revenue"]["total_fee_amount"], "8.98")
+        self.assertEqual(
+            response.data["failed_payment_rates"]["failed_rate_percent"],
+            "50.00",
+        )
+        self.assertEqual(
+            response.data["failed_payout_rates"]["failed_rate_percent"],
+            "100.00",
+        )
+        self.assertEqual(
+            response.data["kyc_completion"]["completion_rate_percent"],
+            "50.00",
+        )
+        self.assertEqual(response.data["funnel"][0]["value"], "quotes_created")
+        self.assertIn("active_transfer_count", response.data["admin_reports"])
+
+        self.client.force_authenticate(self.sender)
+        forbidden_response = self.client.get(reverse("transfer-operations-reports"))
+        self.assertEqual(forbidden_response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_staff_operations_report_rejects_invalid_date_range(self):
+        self.client.force_authenticate(self.staff)
+
+        response = self.client.get(
+            reverse("transfer-operations-reports"),
+            {"start_date": "2026-02-02", "end_date": "2026-02-01"},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_transfer_creation_selects_payout_provider_from_corridor_route(self):
         quote = self.create_quote(send_amount=Decimal("100.00"))
         self.client.force_authenticate(self.sender)
@@ -1522,6 +1695,44 @@ class CoreTransferProductTests(APITestCase):
                 subject=f"MbongoPay transfer {transfer.reference} created",
             ).exists(),
         )
+
+    def test_transfer_creation_copies_quote_fx_metadata(self):
+        quote = self.create_quote(send_amount=Decimal("100.00"))
+        quote.rate_source = "open_exchange_rates"
+        quote.rate_provider_name = "open_exchange_rates"
+        quote.is_primary_rate = True
+        quote.is_live_rate = True
+        quote.save(
+            update_fields=(
+                "rate_source",
+                "rate_provider_name",
+                "is_primary_rate",
+                "is_live_rate",
+                "updated_at",
+            ),
+        )
+        self.client.force_authenticate(self.sender)
+
+        response = self.client.post(
+            reverse("transfer-list-create"),
+            {
+                "quote_id": str(quote.id),
+                "recipient_id": str(self.recipient.id),
+                "reason_for_transfer": "Family support",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        transfer = Transfer.objects.get(id=response.data["id"])
+        self.assertEqual(transfer.rate_source, "open_exchange_rates")
+        self.assertEqual(transfer.rate_provider_name, "open_exchange_rates")
+        self.assertTrue(transfer.is_primary_rate)
+        self.assertTrue(transfer.is_live_rate)
+        self.assertEqual(response.data["rate_source"], "open_exchange_rates")
+        self.assertEqual(response.data["rate_provider_name"], "open_exchange_rates")
+        self.assertTrue(response.data["is_primary_rate"])
+        self.assertTrue(response.data["is_live_rate"])
 
     def test_transfer_limit_rule_can_hold_transfer_on_creation(self):
         TransferLimitRule.objects.create(
@@ -1877,6 +2088,44 @@ class CoreTransferProductTests(APITestCase):
         self.assertEqual(checks.count(), 2)
         self.assertEqual(checks[0].status, TransferSanctionsCheck.Status.QUEUED)
         self.assertEqual(checks[1].status, TransferSanctionsCheck.Status.QUEUED)
+
+    @override_settings(
+        SANCTIONS_AML_PROVIDER="screening_provider",
+        SANCTIONS_AML_PROVIDER_CONFIGS={
+            "screening_provider": {
+                "display_name": "Screening provider",
+                "api_key": "secret-screening-key",
+            },
+        },
+    )
+    def test_transfer_creation_uses_configured_sanctions_provider(self):
+        quote = self.create_quote(send_amount=Decimal("100.00"))
+        self.client.force_authenticate(self.sender)
+
+        response = self.client.post(
+            reverse("transfer-list-create"),
+            {
+                "quote_id": str(quote.id),
+                "recipient_id": str(self.recipient.id),
+                "reason_for_transfer": "Family support",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        transfer = Transfer.objects.get(id=response.data["id"])
+        check = transfer.sanctions_checks.get(
+            party_type=TransferSanctionsCheck.PartyType.RECIPIENT,
+        )
+        self.assertEqual(check.provider_name, "screening_provider")
+        self.assertEqual(
+            check.screening_payload["integration_mode"],
+            "external_sanctions_aml_provider",
+        )
+        self.assertTrue(
+            check.screening_payload["provider_config"]["api_key_configured"],
+        )
+        self.assertNotIn("secret-screening-key", str(check.screening_payload))
 
     def test_staff_can_clear_sanctions_check(self):
         quote = self.create_quote(send_amount=Decimal("100.00"))

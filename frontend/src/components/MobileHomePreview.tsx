@@ -56,45 +56,65 @@ export function MobileHomePreview({
   ];
 
   return (
-    <section className="mobile-home-hero">
-      <div className="mobile-shell">
-        <div className="mobile-hero-image" id="mobile-how-it-works">
-          <img
-            src="/images/family-mobile-transfer.jpg"
-            alt=""
-            aria-hidden="true"
-            className="mobile-hero-photo"
-          />
-          <div className="mobile-trust-row">
-            <div className="mobile-trust-left">
-              <ShieldCheckIcon className="mobile-shield" />
-              <span>Secure</span>
-              <span className="dot">&bull;</span>
-              <span>Fast</span>
-              <span className="dot">&bull;</span>
-              <span>Transparent</span>
+    <>
+      <section className="mobile-home-hero">
+        <div className="mobile-shell">
+          <div className="mobile-hero-image" id="mobile-how-it-works">
+            <img
+              src="/images/family-mobile-transfer.jpg"
+              alt=""
+              aria-hidden="true"
+              className="mobile-hero-photo"
+            />
+            <div className="mobile-trust-row">
+              <div className="mobile-trust-left">
+                <ShieldCheckIcon className="mobile-shield" />
+                <span>Secure</span>
+                <span className="dot">&bull;</span>
+                <span>Fast</span>
+                <span className="dot">&bull;</span>
+                <span>Transparent</span>
+              </div>
+
+              <div className="mobile-flags">
+                {trustFlags.map((flag) => (
+                  <span className="mobile-flag-chip" key={flag.label} title={flag.label}>
+                    <img src={flag.src} alt="" />
+                  </span>
+                ))}
+                <span className="mobile-plus">+6</span>
+              </div>
             </div>
 
-            <div className="mobile-flags">
-              {trustFlags.map((flag) => (
-                <span className="mobile-flag-chip" key={flag.label} title={flag.label}>
-                  <img src={flag.src} alt="" />
-                </span>
-              ))}
-              <span className="mobile-plus">+6</span>
+            <div className="mobile-hero-overlay">
+              <h1>Send money across borders</h1>
+              <p>
+                Fast, secure transfers for families, everyday support, and
+                businesses.
+              </p>
+              <div className="mobile-hero-actions">
+                <button
+                  className="mobile-hero-button mobile-hero-button-solid"
+                  type="button"
+                  onClick={onContinue}
+                >
+                  Start a transfer
+                </button>
+                <a
+                  className="mobile-hero-button mobile-hero-button-ghost"
+                  href="#mobile-preview"
+                >
+                  View rates
+                </a>
+              </div>
             </div>
-          </div>
-
-          <div className="mobile-hero-overlay">
-            <h1>Send money across borders</h1>
-            <p>
-              Fast, secure transfers for families, everyday support, and
-              businesses.
-            </p>
           </div>
         </div>
+      </section>
 
-        <div className="mobile-transfer-card" id="mobile-preview">
+      <section className="mobile-quote-section" id="mobile-preview">
+        <div className="mobile-shell">
+          <div className="mobile-transfer-card">
           <div className="mobile-card-section mobile-card-top">
             <div className="mobile-card-left">
               <div className="mobile-label-row">
@@ -225,14 +245,15 @@ export function MobileHomePreview({
           <button className="mobile-continue-btn" onClick={onContinue} type="button">
             Continue
           </button>
-        </div>
+          </div>
 
-        <div className="mobile-safe-note">
-          <LockIcon className="lock" />
-          <span>Your money is safe with MbongoPay</span>
+          <div className="mobile-safe-note">
+            <LockIcon className="lock" />
+            <span>Your money is safe with MbongoPay</span>
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
+    </>
   );
 }
 

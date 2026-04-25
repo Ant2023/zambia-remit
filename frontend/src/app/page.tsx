@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { AppNavbar } from "@/components/AppNavbar";
 import { MobileHomePreview } from "@/components/MobileHomePreview";
 import {
   type AuthSession,
@@ -12,9 +13,8 @@ import {
   getDestinationCountries,
   getRateEstimate,
   getSenderCountries,
-  logoutCustomer,
 } from "@/lib/api";
-import { clearAuthSession, getStoredAuthSession } from "@/lib/auth";
+import { getStoredAuthSession } from "@/lib/auth";
 
 const PREVIEW_CURRENCIES: Record<string, Currency> = {
   USD: {
@@ -140,7 +140,6 @@ export default function Home() {
   const [loadingPreviewRate, setLoadingPreviewRate] = useState(false);
   const [previewCountriesLoaded, setPreviewCountriesLoaded] = useState(false);
   const [hasPreviewInteraction, setHasPreviewInteraction] = useState(false);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const previewAmountNumber = parseAmountNumber(previewAmount);
   const previewRequestAmount =
     previewAmountNumber !== null && previewAmountNumber > 0
@@ -253,20 +252,6 @@ export default function Home() {
     previewRequestAmount,
     sourceCountryId,
   ]);
-
-  async function handleLogout() {
-    if (authSession?.token) {
-      try {
-        await logoutCustomer(authSession.token);
-      } catch {
-        // The local session should still be cleared if the token is already invalid.
-      }
-    }
-
-    clearAuthSession();
-    setAuthSession(null);
-    router.push("/login");
-  }
 
   const selectedSourceCountry = senderCountries.find(
     (country) => country.id === sourceCountryId,
@@ -400,99 +385,7 @@ export default function Home() {
 
   return (
     <div className="premium-home">
-      <header className="premium-nav">
-        <div className="premium-nav-inner">
-          <Link className="premium-brand" href="/">
-            <span className="brand-mark">MP</span>
-            <span>
-              <span className="brand-name">MbongoPay</span>
-              <span className="brand-subtitle">Cross-border money transfers</span>
-            </span>
-          </Link>
-
-          <nav className="premium-links" aria-label="Primary navigation">
-            <a href="#how-it-works">How it works</a>
-            <a href="#preview">Rates</a>
-            <a href="#trust">Security</a>
-            <Link href="/help">Help</Link>
-          </nav>
-
-          <div className="premium-actions">
-            {authSession ? (
-              <>
-                <span className="signed-in-label">{authSession.user.email}</span>
-                <button
-                  type="button"
-                  className="nav-button ghost"
-                  onClick={handleLogout}
-                >
-                  Log out
-                </button>
-              </>
-            ) : (
-              <>
-                <Link className="nav-button ghost" href="/login?mode=login&next=/send">
-                  Log in
-                </Link>
-                <Link className="nav-button solid" href={transferStartHref}>
-                  Get started
-                </Link>
-              </>
-            )}
-          </div>
-
-          <button
-            type="button"
-            className="mobile-menu-button"
-            aria-label={isMobileMenuOpen ? "Close menu" : "Open menu"}
-            aria-expanded={isMobileMenuOpen}
-            onClick={() => setIsMobileMenuOpen((isOpen) => !isOpen)}
-          >
-            <span />
-            <span />
-            <span />
-          </button>
-        </div>
-
-        {isMobileMenuOpen ? (
-          <div className="premium-mobile-menu">
-            <a href="#how-it-works" onClick={() => setIsMobileMenuOpen(false)}>
-              How it works
-            </a>
-            <a href="#preview" onClick={() => setIsMobileMenuOpen(false)}>
-              Rates
-            </a>
-            <a href="#trust" onClick={() => setIsMobileMenuOpen(false)}>
-              Security
-            </a>
-            <Link href="/help" onClick={() => setIsMobileMenuOpen(false)}>
-              Help
-            </Link>
-            {authSession ? (
-              <button type="button" onClick={handleLogout}>
-                Log out
-              </button>
-            ) : (
-              <Link
-                href="/login?mode=login&next=/send"
-                onClick={() => setIsMobileMenuOpen(false)}
-              >
-                Log in
-              </Link>
-            )}
-          </div>
-        ) : null}
-
-        <div className="country-flag-ribbon" aria-hidden="true">
-          <div className="country-flag-track">
-            {flagRibbonItems.map((item, index) => (
-              <div className="country-flag-chip" key={`${item.label}-${index}`}>
-                <img src={item.src} alt="" />
-              </div>
-            ))}
-          </div>
-        </div>
-      </header>
+      <AppNavbar flagRibbonItems={flagRibbonItems} variant="home" />
 
       <MobileHomePreview
         onContinue={handlePreviewSendMoney}

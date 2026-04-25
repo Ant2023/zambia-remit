@@ -598,6 +598,20 @@ class TransferStatusTransitionSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_blank=True, max_length=500)
 
 
+class StaffReportQuerySerializer(serializers.Serializer):
+    start_date = serializers.DateField(required=False)
+    end_date = serializers.DateField(required=False)
+
+    def validate(self, attrs):
+        start_date = attrs.get("start_date")
+        end_date = attrs.get("end_date")
+        if start_date and end_date and start_date > end_date:
+            raise serializers.ValidationError(
+                {"end_date": "End date must be on or after start date."},
+            )
+        return attrs
+
+
 class TransferSanctionsCheckReviewSerializer(serializers.Serializer):
     status = serializers.ChoiceField(
         choices=(
@@ -784,6 +798,10 @@ class TransferSerializer(serializers.ModelSerializer):
             "send_amount",
             "fee_amount",
             "exchange_rate",
+            "rate_source",
+            "rate_provider_name",
+            "is_primary_rate",
+            "is_live_rate",
             "receive_amount",
             "status",
             "status_display",
@@ -822,6 +840,10 @@ class TransferSerializer(serializers.ModelSerializer):
             "send_amount",
             "fee_amount",
             "exchange_rate",
+            "rate_source",
+            "rate_provider_name",
+            "is_primary_rate",
+            "is_live_rate",
             "receive_amount",
             "status",
             "status_display",
@@ -954,6 +976,10 @@ class TransferSerializer(serializers.ModelSerializer):
             send_amount=quote.send_amount,
             fee_amount=quote.fee_amount,
             exchange_rate=quote.exchange_rate,
+            rate_source=quote.rate_source,
+            rate_provider_name=quote.rate_provider_name,
+            is_primary_rate=quote.is_primary_rate,
+            is_live_rate=quote.is_live_rate,
             receive_amount=quote.receive_amount,
             reason_for_transfer=validated_data.get("reason_for_transfer", ""),
         )

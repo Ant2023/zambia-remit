@@ -186,13 +186,30 @@ async function ensureBackend(apiBaseUrl) {
 }
 
 function startNextDevServer() {
-  const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
+  const nextCliPath = path.join(
+    frontendDir,
+    "node_modules",
+    "next",
+    "dist",
+    "bin",
+    "next",
+  );
+
   console.log("[dev] Starting Next.js frontend...");
 
-  nextDevServer = spawn(npxCommand, ["next", "dev", "--webpack"], {
+  nextDevServer = spawn(process.execPath, [nextCliPath, "dev", "--webpack"], {
     cwd: frontendDir,
     stdio: "inherit",
     env: process.env,
+  });
+
+  nextDevServer.on("error", (error) => {
+    if (shuttingDown) {
+      return;
+    }
+
+    console.error(`[dev] Failed to start Next.js frontend: ${error.message}`);
+    shutdown(1);
   });
 
   nextDevServer.on("exit", (code) => {

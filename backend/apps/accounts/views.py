@@ -5,7 +5,6 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.http import FileResponse
-from django.core.mail import send_mail
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework import generics, permissions, status
@@ -14,8 +13,10 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from common.email_providers import send_transactional_email
 from common.permissions import IsStaffWithRequiredPermissions
 from common.security import decrypt_bytes
+from .kyc_providers import request_sender_kyc_check
 from .models import SenderDocument, SenderProfile
 from .serializers import (
     CustomerLoginSerializer,
@@ -114,15 +115,16 @@ class PasswordResetRequestView(APIView):
                 f"{settings.FRONTEND_BASE_URL}/reset-password/confirm"
                 f"?uid={uid}&token={token}"
             )
-            send_mail(
-                "Reset your MbongoPay password",
-                (
+            send_transactional_email(
+                subject="Reset your MbongoPay password",
+                body=(
                     "Use this secure link to reset your MbongoPay password:\n\n"
                     f"{reset_url}\n\n"
                     "If you did not request this, you can ignore this email."
                 ),
-                settings.DEFAULT_FROM_EMAIL,
-                [user.email],
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_emails=[user.email],
+                metadata={"event_type": "password_reset"},
             )
 
         return Response({"detail": PASSWORD_RESET_RESPONSE})
@@ -217,6 +219,7 @@ class SenderKycSubmitView(APIView):
             )
 
         profile.submit_kyc()
+        request_sender_kyc_check(profile)
         return Response(SenderProfileSerializer(profile).data)
 
 

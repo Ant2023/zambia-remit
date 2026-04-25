@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 
-from .models import SenderDocument, SenderProfile, User
+from .models import SenderDocument, SenderKycCheck, SenderProfile, User
 
 
 @admin.register(User)
@@ -78,6 +78,37 @@ class SenderDocumentAdmin(admin.ModelAdmin):
         "content_type",
         "file_size",
         "sha256_digest",
+        "created_at",
+        "updated_at",
+    )
+
+
+@admin.register(SenderKycCheck)
+class SenderKycCheckAdmin(admin.ModelAdmin):
+    list_display = (
+        "sender_profile",
+        "provider_name",
+        "status",
+        "provider_reference",
+        "submitted_at",
+        "completed_at",
+    )
+    list_filter = ("provider_name", "status")
+    search_fields = (
+        "sender_profile__user__email",
+        "provider_reference",
+    )
+    readonly_fields = (
+        "sender_profile",
+        "provider_name",
+        "provider_reference",
+        "status",
+        "request_payload",
+        "response_payload",
+        "status_reason",
+        "submitted_at",
+        "completed_at",
+        "error",
         "created_at",
         "updated_at",
     )

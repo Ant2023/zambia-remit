@@ -118,6 +118,10 @@ class Transfer(BaseModel):
     send_amount = models.DecimalField(max_digits=12, decimal_places=2)
     fee_amount = models.DecimalField(max_digits=12, decimal_places=2)
     exchange_rate = models.DecimalField(max_digits=18, decimal_places=8)
+    rate_source = models.CharField(max_length=40, default="database")
+    rate_provider_name = models.CharField(max_length=120, blank=True, default="")
+    is_primary_rate = models.BooleanField(default=False)
+    is_live_rate = models.BooleanField(default=False)
     receive_amount = models.DecimalField(max_digits=12, decimal_places=2)
     status = models.CharField(
         max_length=32,

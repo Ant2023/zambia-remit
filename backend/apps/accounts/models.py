@@ -173,6 +173,47 @@ class SenderProfile(BaseModel):
         return f"Profile for {self.user.email}"
 
 
+class SenderKycCheck(BaseModel):
+    class Status(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        SUBMITTED = "submitted", "Submitted"
+        CLEAR = "clear", "Clear"
+        NEEDS_REVIEW = "needs_review", "Needs review"
+        REJECTED = "rejected", "Rejected"
+        ERROR = "error", "Error"
+        SKIPPED = "skipped", "Skipped"
+
+    sender_profile = models.ForeignKey(
+        SenderProfile,
+        on_delete=models.CASCADE,
+        related_name="kyc_checks",
+    )
+    provider_name = models.CharField(max_length=120)
+    provider_reference = models.CharField(max_length=120, blank=True)
+    status = models.CharField(
+        max_length=24,
+        choices=Status.choices,
+        default=Status.QUEUED,
+    )
+    request_payload = models.JSONField(default=dict, blank=True)
+    response_payload = models.JSONField(default=dict, blank=True)
+    status_reason = models.TextField(blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=("sender_profile", "status")),
+            models.Index(fields=("provider_name", "provider_reference")),
+            models.Index(fields=("status", "created_at")),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.sender_profile.user.email}: {self.provider_name}"
+
+
 class SenderDocument(BaseModel):
     class DocumentType(models.TextChoices):
         GOVERNMENT_ID = "government_id", "Government ID"

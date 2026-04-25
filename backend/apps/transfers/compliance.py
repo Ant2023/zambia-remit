@@ -23,6 +23,7 @@ from .models import (
     TransferRiskRule,
     TransferSanctionsCheck,
 )
+from .sanctions_providers import get_sanctions_aml_provider
 from .services import record_compliance_event, transition_transfer_status
 
 
@@ -65,7 +66,7 @@ def evaluate_transfer_compliance(
     *,
     changed_by=None,
 ) -> list[TransferComplianceFlag]:
-    ensure_transfer_sanctions_checks(transfer)
+    ensure_transfer_sanctions_checks(transfer, changed_by=changed_by)
     return [
         *evaluate_transfer_limits(transfer, changed_by=changed_by),
         *evaluate_transfer_risk_rules(transfer, changed_by=changed_by),
@@ -306,24 +307,87 @@ def get_matching_recipient_verification_rules(transfer: Transfer):
     return queryset
 
 
-def ensure_transfer_sanctions_checks(transfer: Transfer) -> list[TransferSanctionsCheck]:
+def ensure_transfer_sanctions_checks(
+    transfer: Transfer,
+    *,
+    changed_by=None,
+) -> list[TransferSanctionsCheck]:
+    provider = get_sanctions_aml_provider()
     checks = []
     for party_type in (
         TransferSanctionsCheck.PartyType.SENDER,
         TransferSanctionsCheck.PartyType.RECIPIENT,
     ):
         screened_name, payload = build_sanctions_screening_payload(transfer, party_type)
-        check, _ = TransferSanctionsCheck.objects.get_or_create(
+        existing_check = TransferSanctionsCheck.objects.filter(
             transfer=transfer,
             party_type=party_type,
-            defaults={
-                "screened_name": screened_name,
-                "screening_payload": payload,
-            },
+        ).first()
+        if existing_check:
+            checks.append(existing_check)
+            continue
+
+        result = provider.screen_party(
+            party_type=party_type,
+            screened_name=screened_name,
+            payload=payload,
+            transfer_reference=transfer.reference,
         )
+        check = TransferSanctionsCheck.objects.create(
+            transfer=transfer,
+            party_type=party_type,
+            status=result.status,
+            screened_name=screened_name,
+            provider_name=result.provider_name,
+            provider_reference=result.provider_reference,
+            screening_payload=result.screening_payload,
+            response_payload=result.response_payload,
+            match_score=result.match_score,
+            review_note=result.status_reason,
+        )
+        apply_provider_sanctions_result(check, changed_by=changed_by)
         checks.append(check)
 
     return checks
+
+
+def apply_provider_sanctions_result(
+    check: TransferSanctionsCheck,
+    *,
+    changed_by=None,
+) -> None:
+    transfer = check.transfer
+    previous_compliance_status = transfer.compliance_status
+    if check.status in {
+        TransferSanctionsCheck.Status.POSSIBLE_MATCH,
+        TransferSanctionsCheck.Status.CONFIRMED_MATCH,
+    }:
+        create_sanctions_flag(check, changed_by=changed_by)
+        if transfer.compliance_status != Transfer.ComplianceStatus.ON_HOLD:
+            transfer.compliance_status = Transfer.ComplianceStatus.ON_HOLD
+            transfer.save(update_fields=("compliance_status", "updated_at"))
+
+    if check.status in {
+        TransferSanctionsCheck.Status.CLEAR,
+        TransferSanctionsCheck.Status.SKIPPED,
+    }:
+        resolve_sanctions_flag(check, changed_by=changed_by)
+
+    if check.status != TransferSanctionsCheck.Status.QUEUED:
+        record_compliance_event(
+            transfer,
+            TransferComplianceEvent.Action.SCREENING,
+            changed_by=changed_by,
+            note=check.review_note,
+            previous_transfer_status=transfer.status,
+            previous_compliance_status=previous_compliance_status,
+            metadata={
+                "party_type": check.party_type,
+                "screening_status": check.status,
+                "provider_name": check.provider_name,
+                "provider_reference": check.provider_reference,
+            },
+        )
 
 
 def evaluate_limit_rule(

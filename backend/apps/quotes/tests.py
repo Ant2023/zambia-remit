@@ -100,6 +100,10 @@ class QuotePayoutRouteTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         quote = Quote.objects.get(id=response.data["id"])
         self.assertEqual(quote.payout_method, PayoutMethod.MOBILE_MONEY)
+        self.assertEqual(quote.rate_source, "database")
+        self.assertEqual(quote.rate_provider_name, "test_rate")
+        self.assertTrue(quote.is_primary_rate)
+        self.assertFalse(quote.is_live_rate)
 
     def test_quote_creation_rejects_payout_method_without_corridor_route(self):
         self.client.force_authenticate(self.sender)
@@ -116,6 +120,48 @@ class QuotePayoutRouteTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("not available", str(response.data["payout_method"]))
+
+    @override_settings(
+        FX_RATE_SOURCE="open_exchange_rates",
+        FX_RATE_SOURCE_CONFIGS={
+            "open_exchange_rates": {
+                "app_id": "test-app-id",
+                "use_symbols": True,
+            },
+        },
+    )
+    @patch("apps.quotes.fx_sources.request_json")
+    def test_quote_creation_preserves_live_fx_metadata(self, mock_request_json):
+        self.client.force_authenticate(self.sender)
+        mock_request_json.return_value = {
+            "base": "USD",
+            "timestamp": 1776834000,
+            "rates": {
+                "ZMW": "25.50000000",
+            },
+        }
+
+        response = self.client.post(
+            reverse("quote-list-create"),
+            {
+                "corridor_id": str(self.corridor.id),
+                "payout_method": PayoutMethod.MOBILE_MONEY,
+                "send_amount": "100.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["rate_source"], "open_exchange_rates")
+        self.assertEqual(response.data["rate_provider_name"], "open_exchange_rates")
+        self.assertTrue(response.data["is_primary_rate"])
+        self.assertTrue(response.data["is_live_rate"])
+
+        quote = Quote.objects.get(id=response.data["id"])
+        self.assertEqual(quote.rate_source, "open_exchange_rates")
+        self.assertEqual(quote.rate_provider_name, "open_exchange_rates")
+        self.assertTrue(quote.is_primary_rate)
+        self.assertTrue(quote.is_live_rate)
 
     @override_settings(
         FX_RATE_SOURCE="open_exchange_rates",
@@ -149,6 +195,10 @@ class QuotePayoutRouteTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(str(response.data["exchange_rate"]), "25.50000000")
         self.assertEqual(str(response.data["receive_amount"]), "2550.00")
+        self.assertEqual(response.data["rate_source"], "open_exchange_rates")
+        self.assertEqual(response.data["rate_provider_name"], "open_exchange_rates")
+        self.assertTrue(response.data["is_primary_rate"])
+        self.assertTrue(response.data["is_live_rate"])
         request_kwargs = mock_request_json.call_args.kwargs
         self.assertEqual(request_kwargs["method"], "GET")
         self.assertFalse(request_kwargs["include_api_key_auth"])
@@ -253,7 +303,49 @@ class QuotePayoutRouteTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(str(response.data["exchange_rate"]), "25.70000000")
         self.assertEqual(str(response.data["receive_amount"]), "2570.00")
+        self.assertEqual(response.data["rate_source"], "frankfurter")
+        self.assertEqual(response.data["rate_provider_name"], "frankfurter")
+        self.assertFalse(response.data["is_primary_rate"])
+        self.assertTrue(response.data["is_live_rate"])
         fallback_request_kwargs = mock_request_json.call_args_list[1].kwargs
         self.assertEqual(fallback_request_kwargs["method"], "GET")
         self.assertEqual(fallback_request_kwargs["path"], "/v2/rate/USD/ZMW")
         self.assertFalse(fallback_request_kwargs["include_api_key_auth"])
+
+    @override_settings(
+        FX_RATE_SOURCE="open_exchange_rates",
+        FX_RATE_SOURCE_CONFIGS={
+            "open_exchange_rates": {
+                "app_id": "test-app-id",
+                "use_symbols": True,
+            },
+        },
+    )
+    @patch("apps.quotes.fx_sources.request_json")
+    def test_rate_estimate_falls_back_to_database_when_live_sources_fail(
+        self,
+        mock_request_json,
+    ):
+        mock_request_json.side_effect = [
+            ProviderRequestError("open exchange rates down"),
+            ProviderRequestError("frankfurter down"),
+        ]
+
+        response = self.client.get(
+            reverse("rate-estimate"),
+            {
+                "source_country_id": str(self.us.id),
+                "destination_country_id": str(self.zambia.id),
+                "send_amount": "100.00",
+                "payout_method": PayoutMethod.MOBILE_MONEY,
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(str(response.data["exchange_rate"]), "25.50000000")
+        self.assertEqual(str(response.data["receive_amount"]), "2550.00")
+        self.assertEqual(response.data["rate_source"], "database")
+        self.assertEqual(response.data["rate_provider_name"], "test_rate")
+        self.assertFalse(response.data["is_primary_rate"])
+        self.assertFalse(response.data["is_live_rate"])
+        self.assertEqual(mock_request_json.call_count, 2)

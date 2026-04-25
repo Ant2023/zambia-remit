@@ -41,7 +41,18 @@ CARD_PAYMENT_PROCESSOR=hosted_card_provider
 BANK_TRANSFER_PAYMENT_PROCESSOR=manual_bank_transfer
 PAYMENT_PROVIDER_CONFIGS={"hosted_card_provider":{"display_name":"Hosted card provider","base_url":"https://api.payment-provider.example","api_key":"replace-with-payment-api-key","create_session_path":"/checkout/sessions","checkout_url":"https://checkout.payment-provider.example"}}
 PAYMENT_WEBHOOK_SECRETS=hosted_card_provider:replace-with-payment-webhook-secret
-PAYOUT_WEBHOOK_SECRETS=provider-code:replace-with-payout-webhook-secret
+PAYOUT_PROVIDER_CONFIGS={"mobile_money_provider":{"display_name":"Mobile money payout provider","base_url":"https://api.payout-provider.example","api_key":"replace-with-payout-api-key","submit_path":"/payouts","reverse_path":"/payouts/reverse"}}
+PAYOUT_WEBHOOK_SECRETS=mobile_money_provider:replace-with-payout-webhook-secret
+KYC_PROVIDER=kyc_provider
+KYC_PROVIDER_CONFIGS={"kyc_provider":{"display_name":"KYC provider","base_url":"https://api.kyc-provider.example","api_key":"replace-with-kyc-api-key","submit_path":"/checks"}}
+SANCTIONS_AML_PROVIDER=sanctions_aml_provider
+SANCTIONS_AML_PROVIDER_CONFIGS={"sanctions_aml_provider":{"display_name":"Sanctions and AML provider","base_url":"https://api.screening-provider.example","api_key":"replace-with-screening-api-key","screening_path":"/screenings"}}
+FX_RATE_SOURCE=open_exchange_rates
+FX_RATE_SOURCE_CONFIGS={"open_exchange_rates":{"display_name":"Open Exchange Rates","app_id":"replace-with-open-exchange-rates-app-id"}}
+EMAIL_SERVICE_PROVIDER=django_email_backend
+EMAIL_SERVICE_CONFIGS={}
+SMS_SERVICE_PROVIDER=deferred
+SMS_SERVICE_CONFIGS={}
 
 BACKUP_REQUIRED=True
 BACKUP_STORAGE_URL=s3://your-private-backup-bucket/postgres
@@ -104,6 +115,7 @@ npm run build
 - A second customer cannot view the first customer's transfer detail URL.
 - Sender document uploads accept only PDF/JPEG/PNG files and do not expose media URLs.
 - Staff document review/download requires the sender document role permissions.
+- Payment, payout, KYC, sanctions/AML, FX, and email provider env vars are configured for real providers; SMS remains deferred unless a provider is selected.
 - `manage.py check --deploy` passes with explicit encryption, webhook, and backup settings.
 - Django admin works for staff at `/admin/`.
 - `/api/v1/health/` returns `{"status":"ok"}`.

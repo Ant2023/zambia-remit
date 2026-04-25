@@ -3,6 +3,14 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AppNavbar } from "@/components/AppNavbar";
+import { getCustomerStatusLabel } from "@/components/TransferStatusStepper";
+import {
+  Button,
+  Card,
+  MobileContainer,
+  PageHeader,
+  StatusBadge,
+} from "@/components/ui";
 import type { AuthSession, Recipient, SenderProfile, Transfer } from "@/lib/api";
 import {
   formatApiError,
@@ -84,6 +92,22 @@ function getTransferAction(transfer: Transfer) {
     href: `/transfers/${transfer.id}`,
     label: "View details",
   };
+}
+
+function getTransferStatusTone(transfer: Transfer) {
+  if (transfer.status === "failed") {
+    return "error" as const;
+  }
+
+  if (transfer.status === "paid_out" || transfer.status === "completed") {
+    return "success" as const;
+  }
+
+  if (transfer.status === "awaiting_funding") {
+    return "warning" as const;
+  }
+
+  return "info" as const;
 }
 
 export default function DashboardPage() {
@@ -179,265 +203,354 @@ export default function DashboardPage() {
   return (
     <>
       <AppNavbar />
-      <main className="page">
-        <div className="shell stack">
-          <header className="topbar">
-            <div>
-              <p className="kicker">Dashboard</p>
-              <h1>
-                {dashboardFirstName
-                  ? `Welcome back, ${dashboardFirstName}`
-                  : "Welcome back"}
-              </h1>
-              <p className="lede">
-                See what needs attention, continue a transfer, and keep your
-                account ready for the next send.
-              </p>
-            </div>
+      <MobileContainer className="max-w-6xl space-y-5 py-6 sm:py-10">
+        <PageHeader
+          action={
+            authSession && !isStaff ? (
+              <Button
+                disabled={loading}
+                fullWidth
+                onClick={() => loadDashboard()}
+                variant="secondary"
+              >
+                {loading ? "Loading..." : "Refresh"}
+              </Button>
+            ) : null
+          }
+          description="Send money, track transfers, and keep your account ready for the next payout."
+          eyebrow="Dashboard"
+          title={
+            dashboardFirstName
+              ? `Welcome back, ${dashboardFirstName}`
+              : "Welcome back"
+          }
+        />
 
-            <section className="panel stack">
-              <h2>Customer account</h2>
-              {authSession ? (
-                <>
-                  <p className="muted small">Signed in as {authSession.user.email}</p>
-                  {!isStaff ? (
-                    <button type="button" onClick={() => loadDashboard()}>
-                      {loading ? "Loading..." : "Refresh dashboard"}
-                    </button>
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  <p className="muted small">Log in to view your dashboard.</p>
-                  <Link href="/login?mode=login&next=/dashboard">
-                    <button type="button">Log in</button>
-                  </Link>
-                </>
-              )}
-            </section>
-          </header>
+        {error ? (
+          <Card className="border-red-200 bg-red-50">
+            <pre className="whitespace-pre-wrap text-sm font-semibold text-mbongo-error">
+              {error}
+            </pre>
+          </Card>
+        ) : null}
 
-          {error ? <pre className="error small">{error}</pre> : null}
-
-          {isStaff ? (
-            <section className="panel stack">
-              <h2>Staff account</h2>
-              <p className="muted">
+        {isStaff ? (
+          <Card className="space-y-4">
+            <StatusBadge tone="info">Staff account</StatusBadge>
+            <div className="space-y-1">
+              <h2 className="text-xl font-bold text-mbongo-navy">
+                Operations account
+              </h2>
+              <p className="mbp-helper-text">
                 Operations accounts use the transfer control center.
               </p>
-              <Link href="/operations">
-                <button type="button">Open operations</button>
-              </Link>
-            </section>
-          ) : null}
+            </div>
+            <Link className="mbp-button-primary" href="/operations">
+              Open operations
+            </Link>
+          </Card>
+        ) : null}
 
-          {!authSession ? (
-            <section className="panel stack">
-              <h2>Your account, in one place</h2>
-              <p className="muted">
+        {!authSession ? (
+          <Card className="space-y-5">
+            <div className="space-y-2">
+              <StatusBadge tone="info">Customer account</StatusBadge>
+              <h2 className="text-2xl font-bold text-mbongo-navy">
+                Your money transfer home
+              </h2>
+              <p className="text-sm leading-6 text-mbongo-muted sm:text-base">
                 Create or log in to a customer account to see transfers,
                 recipients, and profile readiness.
               </p>
-              <div className="row">
-                <Link href="/login?mode=register&next=/dashboard">
-                  <button type="button">Create account</button>
-                </Link>
-                <Link href="/login?mode=login&next=/dashboard">
-                  <button type="button" className="secondary-button">
-                    Log in
-                  </button>
-                </Link>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Link className="mbp-button-primary" href="/login?mode=register&next=/dashboard">
+                Create account
+              </Link>
+              <Link className="mbp-button-secondary" href="/login?mode=login&next=/dashboard">
+                Log in
+              </Link>
+            </div>
+          </Card>
+        ) : null}
+
+        {authSession && !isStaff ? (
+          <>
+            <Card className="overflow-hidden bg-mbongo-navy p-0 text-white">
+              <div className="space-y-5 p-5 sm:p-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="space-y-2">
+                    <StatusBadge className="bg-white/10 text-white ring-white/20" tone="info">
+                      Customer account
+                    </StatusBadge>
+                    <h2 className="text-2xl font-bold leading-tight">
+                      Ready to send?
+                    </h2>
+                    <p className="max-w-2xl text-sm leading-6 text-white/80 sm:text-base">
+                      Start a transfer, continue funding, or review your latest
+                      activity from one place.
+                    </p>
+                  </div>
+                  <p className="text-sm font-semibold text-white/70">
+                    {authSession.user.email}
+                  </p>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+                  <Link className="mbp-button-accent min-h-14 text-base" href="/send?new=1">
+                    Send money
+                  </Link>
+                  <Link className="mbp-button-secondary min-h-14 border-white/20 bg-white/10 text-base text-white hover:bg-white/15" href="/history">
+                    View transfers
+                  </Link>
+                </div>
               </div>
+            </Card>
+
+            <section
+              aria-label="Account summary"
+              className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+            >
+              <Card className="space-y-1 p-4">
+                <span className="text-xs font-bold uppercase tracking-[0.12em] text-mbongo-muted">
+                  Profile
+                </span>
+                <strong className="block text-2xl font-bold text-mbongo-navy">
+                  {profilePercent}%
+                </strong>
+                <p className="text-sm text-mbongo-muted">
+                  {profile?.is_complete ? "Funding ready" : "Needs details"}
+                </p>
+              </Card>
+              <Card className="space-y-1 p-4">
+                <span className="text-xs font-bold uppercase tracking-[0.12em] text-mbongo-muted">
+                  Recipients
+                </span>
+                <strong className="block text-2xl font-bold text-mbongo-navy">
+                  {recipients.length}
+                </strong>
+                <p className="text-sm text-mbongo-muted">Saved people</p>
+              </Card>
+              <Card className="space-y-1 p-4">
+                <span className="text-xs font-bold uppercase tracking-[0.12em] text-mbongo-muted">
+                  Active
+                </span>
+                <strong className="block text-2xl font-bold text-mbongo-navy">
+                  {activeTransfers.length}
+                </strong>
+                <p className="text-sm text-mbongo-muted">Transfers in motion</p>
+              </Card>
+              <Card className="space-y-1 p-4">
+                <span className="text-xs font-bold uppercase tracking-[0.12em] text-mbongo-muted">
+                  Funding
+                </span>
+                <strong className="block text-2xl font-bold text-mbongo-navy">
+                  {awaitingFundingTransfers.length}
+                </strong>
+                <p className="text-sm text-mbongo-muted">Awaiting payment</p>
+              </Card>
             </section>
-          ) : null}
 
-          {authSession && !isStaff ? (
-            <>
-              <section className="dashboard-metrics" aria-label="Account summary">
-                <div className="dashboard-metric">
-                  <span>Profile</span>
-                  <strong>{profilePercent}%</strong>
-                  <p>{profile?.is_complete ? "Funding ready" : "Needs details"}</p>
+            <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
+              <Card className="space-y-5">
+                <div className="space-y-2">
+                  <p className="mbp-page-kicker">Next best action</p>
+                  <h2 className="text-xl font-bold text-mbongo-navy">
+                    {nextAction.title}
+                  </h2>
+                  <p className="text-sm leading-6 text-mbongo-muted">
+                    {nextAction.body}
+                  </p>
                 </div>
-                <div className="dashboard-metric">
-                  <span>Recipients</span>
-                  <strong>{recipients.length}</strong>
-                  <p>Saved people</p>
-                </div>
-                <div className="dashboard-metric">
-                  <span>Active</span>
-                  <strong>{activeTransfers.length}</strong>
-                  <p>Transfers in motion</p>
-                </div>
-                <div className="dashboard-metric">
-                  <span>Funding</span>
-                  <strong>{awaitingFundingTransfers.length}</strong>
-                  <p>Awaiting payment</p>
-                </div>
-              </section>
 
-              <div className="dashboard-layout">
-                <section className="panel stack">
-                  <div>
-                    <p className="kicker">Next best action</p>
-                    <h2>{nextAction.title}</h2>
-                    <p className="muted">{nextAction.body}</p>
+                <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+                  <Link className="mbp-button-primary" href={nextAction.href}>
+                    {nextAction.buttonLabel}
+                  </Link>
+                  <Link className="mbp-button-secondary" href="/history">
+                    Transaction history
+                  </Link>
+                </div>
+              </Card>
+
+              <Card className="space-y-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <p className="mbp-page-kicker">Latest transfer</p>
+                    <h2 className="text-xl font-bold text-mbongo-navy">
+                      {latestTransfer?.reference ?? "No transfers yet"}
+                    </h2>
                   </div>
-
-                  <div className="dashboard-action-box">
-                    <Link href={nextAction.href}>
-                      <button type="button">{nextAction.buttonLabel}</button>
-                    </Link>
-                    <Link className="text-link" href="/history">
-                      View transaction history
-                    </Link>
-                  </div>
-                </section>
-
-                <section className="panel stack">
-                  <div>
-                    <p className="kicker">Latest transfer</p>
-                    <h2>{latestTransfer?.reference ?? "No transfers yet"}</h2>
-                  </div>
-
                   {latestTransfer ? (
-                    <>
-                      <dl className="summary-list">
-                        <div>
-                          <dt>Status</dt>
-                          <dd>{latestTransfer.status_display}</dd>
-                        </div>
-                        <div>
-                          <dt>Send amount</dt>
-                          <dd>
-                            {formatMoney(
-                              latestTransfer.send_amount,
-                              latestTransfer.source_currency_details?.code,
-                            )}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>Recipient receives</dt>
-                          <dd>
-                            {formatMoney(
-                              latestTransfer.receive_amount,
-                              latestTransfer.destination_currency_details?.code,
-                            )}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>Created</dt>
-                          <dd>{formatDate(latestTransfer.created_at)}</dd>
-                        </div>
-                      </dl>
-                      <Link href={getTransferAction(latestTransfer).href}>
-                        <button type="button" className="secondary-button">
-                          {getTransferAction(latestTransfer).label}
-                        </button>
-                      </Link>
-                    </>
-                  ) : (
-                    <>
-                      <p className="muted">
-                        Start your first transfer when you are ready.
-                      </p>
-                      <Link href="/send?new=1">
-                        <button type="button">Send money</button>
-                      </Link>
-                    </>
-                  )}
-                </section>
-              </div>
-
-              <div className="grid">
-                <section className="panel stack">
-                  <div className="row between">
-                    <div>
-                      <p className="kicker">Transfers</p>
-                      <h2>Recent activity</h2>
-                    </div>
-                    <Link className="text-link" href="/history">
-                      View all
-                    </Link>
-                  </div>
-
-                  {loading ? <p className="notice">Loading dashboard...</p> : null}
-
-                  {!loading && recentTransfers.length === 0 ? (
-                    <p className="muted">No transfers found yet.</p>
+                    <StatusBadge tone={getTransferStatusTone(latestTransfer)}>
+                      {getCustomerStatusLabel(latestTransfer)}
+                    </StatusBadge>
                   ) : null}
+                </div>
 
-                  {recentTransfers.length > 0 ? (
-                    <div className="dashboard-list">
-                      {recentTransfers.map((transfer) => {
-                        const action = getTransferAction(transfer);
-                        return (
-                          <article key={transfer.id} className="dashboard-list-item">
-                            <div>
-                              <Link className="text-link" href={`/transfers/${transfer.id}`}>
-                                {transfer.reference}
-                              </Link>
-                              <p>
-                                {transfer.status_display} -{" "}
-                                {formatDate(transfer.created_at)}
-                              </p>
-                            </div>
-                            <Link href={action.href}>
-                              <button type="button" className="table-action-button">
-                                {action.label}
-                              </button>
+                {latestTransfer ? (
+                  <>
+                    <dl className="grid gap-3 text-sm">
+                      <div className="flex items-center justify-between gap-4 border-b border-mbongo-line pb-3">
+                        <dt className="text-mbongo-muted">Send amount</dt>
+                        <dd className="font-bold text-mbongo-navy">
+                          {formatMoney(
+                            latestTransfer.send_amount,
+                            latestTransfer.source_currency_details?.code,
+                          )}
+                        </dd>
+                      </div>
+                      <div className="flex items-center justify-between gap-4 border-b border-mbongo-line pb-3">
+                        <dt className="text-mbongo-muted">Recipient receives</dt>
+                        <dd className="font-bold text-mbongo-navy">
+                          {formatMoney(
+                            latestTransfer.receive_amount,
+                            latestTransfer.destination_currency_details?.code,
+                          )}
+                        </dd>
+                      </div>
+                      <div className="flex items-center justify-between gap-4">
+                        <dt className="text-mbongo-muted">Created</dt>
+                        <dd className="font-bold text-mbongo-navy">
+                          {formatDate(latestTransfer.created_at)}
+                        </dd>
+                      </div>
+                    </dl>
+                    <Link
+                      className="mbp-button-secondary"
+                      href={getTransferAction(latestTransfer).href}
+                    >
+                      {getTransferAction(latestTransfer).label}
+                    </Link>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm leading-6 text-mbongo-muted">
+                      Start your first transfer when you are ready.
+                    </p>
+                    <Link className="mbp-button-primary" href="/send?new=1">
+                      Send money
+                    </Link>
+                  </>
+                )}
+              </Card>
+            </div>
+
+            <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+              <Card className="space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="mbp-page-kicker">Transfers</p>
+                    <h2 className="text-xl font-bold text-mbongo-navy">
+                      Recent activity
+                    </h2>
+                  </div>
+                  <Link className="text-sm font-bold text-mbongo-teal" href="/history">
+                    View all
+                  </Link>
+                </div>
+
+                {loading ? (
+                  <p className="rounded-lg bg-mbongo-teal-soft px-4 py-3 text-sm font-semibold text-mbongo-navy">
+                    Loading dashboard...
+                  </p>
+                ) : null}
+
+                {!loading && recentTransfers.length === 0 ? (
+                  <p className="text-sm text-mbongo-muted">No transfers found yet.</p>
+                ) : null}
+
+                {recentTransfers.length > 0 ? (
+                  <div className="grid gap-3">
+                    {recentTransfers.map((transfer) => {
+                      const action = getTransferAction(transfer);
+                      return (
+                        <article
+                          className="grid gap-3 rounded-lg border border-mbongo-line bg-white p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+                          key={transfer.id}
+                        >
+                          <div className="min-w-0 space-y-1">
+                            <Link
+                              className="font-bold text-mbongo-navy"
+                              href={`/transfers/${transfer.id}`}
+                            >
+                              {transfer.reference}
                             </Link>
-                          </article>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </section>
-
-                <section className="panel stack">
-                  <div className="row between">
-                    <div>
-                      <p className="kicker">Recipients</p>
-                      <h2>Saved people</h2>
-                    </div>
-                    <Link className="text-link" href="/recipients">
-                      Manage
-                    </Link>
-                  </div>
-
-                  {!loading && recentRecipients.length === 0 ? (
-                    <p className="muted">No saved recipients yet.</p>
-                  ) : null}
-
-                  {recentRecipients.length > 0 ? (
-                    <div className="dashboard-list">
-                      {recentRecipients.map((recipient) => (
-                        <article key={recipient.id} className="dashboard-list-item">
-                          <div>
-                            <strong>{getRecipientName(recipient)}</strong>
-                            <p>
-                              {recipient.country.name}
-                              {recipient.relationship_to_sender
-                                ? ` - ${recipient.relationship_to_sender}`
-                                : ""}
+                            <p className="text-sm text-mbongo-muted">
+                              {getCustomerStatusLabel(transfer)} ·{" "}
+                              {formatDate(transfer.created_at)}
                             </p>
                           </div>
+                          <Link className="mbp-button-secondary min-h-10 py-2" href={action.href}>
+                            {action.label}
+                          </Link>
                         </article>
-                      ))}
-                    </div>
-                  ) : null}
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </Card>
 
-                  <Link href="/send?new=1">
-                    <button type="button" className="secondary-button">
-                      Add in send flow
-                    </button>
+              <Card className="space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="mbp-page-kicker">Recipients</p>
+                    <h2 className="text-xl font-bold text-mbongo-navy">
+                      Saved people
+                    </h2>
+                  </div>
+                  <Link className="text-sm font-bold text-mbongo-teal" href="/recipients">
+                    Manage
                   </Link>
-                </section>
+                </div>
+
+                {!loading && recentRecipients.length === 0 ? (
+                  <p className="text-sm text-mbongo-muted">No saved recipients yet.</p>
+                ) : null}
+
+                {recentRecipients.length > 0 ? (
+                  <div className="grid gap-3">
+                    {recentRecipients.map((recipient) => (
+                      <article
+                        className="rounded-lg border border-mbongo-line bg-white p-4"
+                        key={recipient.id}
+                      >
+                        <strong className="block text-mbongo-navy">
+                          {getRecipientName(recipient)}
+                        </strong>
+                        <p className="mt-1 text-sm text-mbongo-muted">
+                          {recipient.country.name}
+                          {recipient.relationship_to_sender
+                            ? ` · ${recipient.relationship_to_sender}`
+                            : ""}
+                        </p>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+
+                <Link className="mbp-button-secondary" href="/send?new=1">
+                  Add in send flow
+                </Link>
+              </Card>
+            </div>
+
+            <Card className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-mbongo-navy">
+                  Need help with a transfer?
+                </h2>
+                <p className="mt-1 text-sm text-mbongo-muted">
+                  Find support answers or contact the team with your reference.
+                </p>
               </div>
-            </>
-          ) : null}
-        </div>
-      </main>
+              <Link className="mbp-button-secondary" href="/help">
+                Help center
+              </Link>
+            </Card>
+          </>
+        ) : null}
+      </MobileContainer>
     </>
   );
 }

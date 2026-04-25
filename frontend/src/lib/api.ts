@@ -616,6 +616,8 @@ export class ApiError extends Error {
   }
 }
 
+const API_REQUEST_TIMEOUT_MS = 15000;
+
 function getAuthorizationHeader(token?: string) {
   return token ? `Token ${token}` : null;
 }
@@ -633,10 +635,32 @@ async function apiFetch<T>(
     headers.set("Authorization", authorization);
   }
 
-  const response = await fetch(`/api/django${path}`, {
-    ...options,
-    headers,
-  });
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => {
+    controller.abort();
+  }, API_REQUEST_TIMEOUT_MS);
+
+  let response: Response;
+
+  try {
+    response = await fetch(`/api/django${path}`, {
+      ...options,
+      headers,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new ApiError(
+        "API request timed out",
+        408,
+        { detail: "The request timed out. Please try again." },
+      );
+    }
+
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 
   const contentType = response.headers.get("content-type") ?? "";
   const responseText = await response.text();
