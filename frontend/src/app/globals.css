@@ -2861,9 +2861,27 @@ th {
 }
 
 .trust-section {
+  position: relative;
   width: min(1280px, 100%);
   margin: 0 auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
   padding: 28px 24px 40px;
+}
+
+.trust-section::before {
+  position: absolute;
+  top: 0;
+  left: 24px;
+  right: 24px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(52, 211, 153, 0.28),
+    rgba(20, 184, 166, 0.22),
+    transparent
+  );
+  content: "";
 }
 
 .trust-panel {
@@ -4294,21 +4312,52 @@ th {
   }
 
   .mobile-quote-section {
+    position: relative;
     display: block;
     background:
       radial-gradient(ellipse at 86% 18%, rgba(12, 59, 82, 0.34) 0%, transparent 52%),
       linear-gradient(180deg, #061a2a 0%, #03111f 100%);
     color: #ffffff;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
     padding: 18px 0 30px;
+  }
+
+  .mobile-quote-section::before {
+    position: absolute;
+    top: 0;
+    left: 16px;
+    right: 16px;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(52, 211, 153, 0.24),
+      rgba(20, 184, 166, 0.18),
+      transparent
+    );
+    content: "";
   }
 
   .trust-section {
     width: 100%;
     margin: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
     background:
       radial-gradient(ellipse at 86% 18%, rgba(12, 59, 82, 0.34) 0%, transparent 52%),
       linear-gradient(180deg, #03111f 0%, #061a2a 100%);
     padding: 28px 16px 34px;
+  }
+
+  .trust-section::before {
+    left: 16px;
+    right: 16px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(52, 211, 153, 0.24),
+      rgba(20, 184, 166, 0.18),
+      transparent
+    );
   }
 
   .trust-panel {
@@ -4568,6 +4617,8 @@ th {
 
   .mobile-hero-image {
     position: relative;
+    display: flex;
+    flex-direction: column;
     width: 100vw;
     min-height: 404px;
     margin-left: calc(50% - 50vw);
@@ -4633,9 +4684,14 @@ th {
   .mobile-hero-overlay {
     position: relative;
     z-index: 1;
+    display: flex;
+    width: 100%;
+    flex: 1 1 auto;
+    flex-direction: column;
+    justify-content: center;
     max-width: 390px;
     margin: 0 auto;
-    padding: 44px 28px 58px;
+    padding: 118px 28px 34px;
     text-align: center;
   }
 
@@ -5196,7 +5252,7 @@ th {
 
   .mobile-hero-overlay {
     max-width: 370px;
-    padding: 36px 24px 54px;
+    padding: 112px 24px 30px;
   }
 
   .mobile-hero-overlay h1 {
