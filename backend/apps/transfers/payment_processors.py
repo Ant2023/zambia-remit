@@ -239,30 +239,64 @@ class StripePaymentProcessor(BasePaymentProcessor):
     code = "stripe"
     display_name = "Stripe"
 
+    def _load_stripe(self):
+        try:
+            import stripe  # noqa: PLC0415
+        except ImportError as exc:
+            raise serializers.ValidationError(
+                {
+                    "payment_method": (
+                        "Stripe payments are not installed on the backend. "
+                        "Redeploy the backend after installing dependencies."
+                    ),
+                },
+            ) from exc
+
+        if not settings.STRIPE_SECRET_KEY:
+            raise serializers.ValidationError(
+                {"payment_method": "Stripe secret key is not configured."},
+            )
+
+        stripe.api_key = settings.STRIPE_SECRET_KEY
+        return stripe
+
+    def _raise_stripe_error(self, exc: Exception) -> None:
+        if exc.__class__.__module__.startswith("stripe"):
+            raise serializers.ValidationError(
+                {
+                    "payment_method": (
+                        "Stripe is unavailable or rejected the payment setup. "
+                        "Check the backend Stripe key and try again."
+                    ),
+                },
+            ) from exc
+        raise exc
+
     def prepare_instruction(
         self,
         *,
         transfer: Transfer,
         provider_reference: str,
     ) -> PreparedPaymentInstruction:
-        import stripe  # noqa: PLC0415
-
-        stripe.api_key = settings.STRIPE_SECRET_KEY
+        stripe = self._load_stripe()
         amount = transfer.send_amount + transfer.fee_amount
         currency_code = transfer.source_currency.code.lower()
         amount_in_cents = int(amount * 100)
 
-        intent = stripe.PaymentIntent.create(
-            amount=amount_in_cents,
-            currency=currency_code,
-            metadata={
-                "transfer_id": str(transfer.id),
-                "transfer_reference": transfer.reference,
-                "payment_reference": provider_reference,
-                "sender_id": str(transfer.sender_id),
-            },
-            idempotency_key=provider_reference,
-        )
+        try:
+            intent = stripe.PaymentIntent.create(
+                amount=amount_in_cents,
+                currency=currency_code,
+                metadata={
+                    "transfer_id": str(transfer.id),
+                    "transfer_reference": transfer.reference,
+                    "payment_reference": provider_reference,
+                    "sender_id": str(transfer.sender_id),
+                },
+                idempotency_key=provider_reference,
+            )
+        except Exception as exc:
+            self._raise_stripe_error(exc)
 
         return PreparedPaymentInstruction(
             provider_name=self.code,
@@ -306,9 +340,7 @@ class StripePaymentProcessor(BasePaymentProcessor):
         *,
         instruction: TransferPaymentInstruction,
     ) -> PaymentAuthorizationResult:
-        import stripe  # noqa: PLC0415
-
-        stripe.api_key = settings.STRIPE_SECRET_KEY
+        stripe = self._load_stripe()
         payment_intent_id = instruction.instructions.get("payment_intent_id", "")
 
         if not payment_intent_id:
@@ -323,7 +355,10 @@ class StripePaymentProcessor(BasePaymentProcessor):
                 },
             )
 
-        intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+        try:
+            intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+        except Exception as exc:
+            self._raise_stripe_error(exc)
 
         if intent.status == "succeeded":
             return PaymentAuthorizationResult(
