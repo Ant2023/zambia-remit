@@ -90,6 +90,116 @@ const DEFAULT_HOME_PREVIEW_SOURCE_CURRENCY = "USD";
 const DEFAULT_HOME_PREVIEW_DESTINATION_CURRENCY = "ZMW";
 const DEFAULT_HOME_PREVIEW_FEE = 0;
 
+const HOW_IT_WORKS_STEPS = [
+  {
+    label: "01",
+    title: "Get your quote",
+    copy: "See the rate, fee, and receive amount before you send.",
+  },
+  {
+    label: "02",
+    title: "Add recipient",
+    copy: "Choose who receives the money and how they get paid.",
+  },
+  {
+    label: "03",
+    title: "Pay and track",
+    copy: "Complete payment and follow the transfer to delivery.",
+  },
+];
+
+const COVERAGE_MARKETS = [
+  {
+    country: "United States",
+    countryCode: "US",
+    flag: "/flags/us.svg",
+    copy: "Send from the United States when your destination is available.",
+  },
+  {
+    country: "United Kingdom",
+    countryCode: "GB",
+    flag: "/flags/gb.svg",
+    copy: "Check rates and destination availability before starting.",
+  },
+  {
+    country: "Germany",
+    countryCode: "DE",
+    flag: "/flags/de.svg",
+    copy: "Use supported destinations with clear rates and fees.",
+  },
+  {
+    country: "Canada",
+    countryCode: "CA",
+    flag: "/flags/ca.svg",
+    copy: "Send from Canada when supported destinations are available.",
+  },
+  {
+    country: "France",
+    countryCode: "FR",
+    flag: "/flags/fr.svg",
+    copy: "Check available destinations and payout methods before you send.",
+  },
+  {
+    country: "Zambia",
+    countryCode: "ZM",
+    flag: "/flags/zm.svg",
+    copy: "Use Zambia where it is available in supported transfer flows.",
+  },
+  {
+    country: "Kenya",
+    countryCode: "KE",
+    flag: "/flags/ke.svg",
+    copy: "Choose Kenya when it appears in your available country options.",
+  },
+  {
+    country: "Tanzania",
+    countryCode: "TZ",
+    flag: "/flags/tz.svg",
+    copy: "Check transfer options and delivery methods for Tanzania.",
+  },
+  {
+    country: "South Africa",
+    countryCode: "ZA",
+    flag: "/flags/za.svg",
+    copy: "Review rates, fees, and available destinations before starting.",
+  },
+  {
+    country: "Zimbabwe",
+    countryCode: "ZW",
+    flag: "/flags/zw.svg",
+    copy: "Use supported transfer options as they become available.",
+  },
+  {
+    country: "Namibia",
+    countryCode: "NA",
+    flag: "/flags/na.svg",
+    copy: "Check country availability in the transfer flow before you send.",
+  },
+];
+
+const HOME_FAQS = [
+  {
+    question: "How fast are transfers?",
+    answer:
+      "Mobile Money transfers are designed for same-day delivery once payment and required checks are complete.",
+  },
+  {
+    question: "Can I see the fee before I pay?",
+    answer:
+      "Yes. The quote shows the exchange rate, fee, receive amount, and total to pay before you continue.",
+  },
+  {
+    question: "Where can I send money right now?",
+    answer:
+      "Supported countries are shown in the transfer flow. MbongoPay is built to add more countries over time.",
+  },
+  {
+    question: "What receive method is supported?",
+    answer:
+      "Available receive methods appear based on the selected destination. Mobile Money is supported where available.",
+  },
+];
+
 function isFallbackCountryId(countryId: string) {
   return countryId.startsWith("preview-country-");
 }
@@ -429,8 +539,6 @@ export default function Home() {
                 View rates
               </a>
             </div>
-
-            <span id="how-it-works" className="hero-anchor" aria-hidden="true" />
           </div>
 
           <div className="transfer-card preview-card" id="preview">
@@ -542,35 +650,102 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="trust-section" id="trust">
-          <div className="trust-panel">
-            <div className="trust-grid">
-              <div className="trust-card">
-                <p>Security</p>
-                <h3>Protected every step of the way</h3>
-                <span>
-                  Built with verification, visibility, and transaction confidence at
-                  the core.
-                </span>
-              </div>
+        <section className="how-it-works-section" id="how-it-works">
+          <div className="how-it-works-inner">
+            <div className="how-it-works-heading">
+              <p>How it works</p>
+              <h2>How money moves</h2>
+              <span>
+                A clear flow from live quote to recipient delivery.
+              </span>
+            </div>
 
-              <div className="trust-card">
-                <p>Clarity</p>
-                <h3>Know what you send</h3>
-                <span>
-                  Clear rates, visible fees, and a smoother transfer experience from
-                  start to finish.
-                </span>
-              </div>
+            <div className="how-it-works-list" aria-label="How MbongoPay works">
+              {HOW_IT_WORKS_STEPS.map((step) => (
+                <article className="how-it-works-step" key={step.title}>
+                  <span className="how-it-works-number">{step.label}</span>
+                  <div>
+                    <h3>{step.title}</h3>
+                    <span>{step.copy}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
 
-              <div className="trust-card">
-                <p>Convenience</p>
-                <h3>Designed for real life</h3>
-                <span>
-                  Send for family support, urgent needs, everyday payments, and
-                  business use.
-                </span>
+        <section className="coverage-section" id="coverage">
+          <div className="coverage-inner">
+            <div className="homepage-section-heading">
+              <p>Countries</p>
+              <h2>Countries we cover</h2>
+              <span>
+                Start from a supported sending country, then choose from the
+                available destinations and payout methods in the transfer flow.
+              </span>
+            </div>
+
+            <div className="coverage-carousel">
+              <div
+                className="coverage-route-viewport"
+                aria-label="Countries MbongoPay covers"
+              >
+                <div className="coverage-route-grid">
+                  <div className="coverage-route-set">
+                    {COVERAGE_MARKETS.map((market) => (
+                      <article
+                        className="coverage-route-card"
+                        key={market.country}
+                      >
+                        <div className="coverage-route-flags">
+                          <span>
+                            <img src={market.flag} alt="" />
+                          </span>
+                          <strong>{market.countryCode}</strong>
+                        </div>
+                        <h3>{market.country}</h3>
+                        <p>{market.copy}</p>
+                      </article>
+                    ))}
+                  </div>
+
+                  <div className="coverage-route-set" aria-hidden="true">
+                    {COVERAGE_MARKETS.map((market) => (
+                      <article
+                        className="coverage-route-card"
+                        key={`${market.country}-duplicate`}
+                      >
+                        <div className="coverage-route-flags">
+                          <span>
+                            <img src={market.flag} alt="" />
+                          </span>
+                          <strong>{market.countryCode}</strong>
+                        </div>
+                        <h3>{market.country}</h3>
+                        <p>{market.copy}</p>
+                      </article>
+                    ))}
+                  </div>
+                </div>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="home-faq-section" id="faq">
+          <div className="home-faq-inner">
+            <div className="homepage-section-heading">
+              <p>FAQ</p>
+              <h2>Helpful answers before you send</h2>
+            </div>
+
+            <div className="home-faq-list">
+              {HOME_FAQS.map((item) => (
+                <details className="home-faq-item" key={item.question}>
+                  <summary>{item.question}</summary>
+                  <p>{item.answer}</p>
+                </details>
+              ))}
             </div>
           </div>
         </section>
@@ -605,15 +780,16 @@ export default function Home() {
               <p className="footer-heading">Product</p>
               <div className="footer-links">
                 <a href="#how-it-works">How it works</a>
+                <a href="#coverage">Countries</a>
                 <a href="#preview">Rates</a>
-                <a href="#trust">Security</a>
+                <Link href="/compliance">Security</Link>
               </div>
             </div>
 
             <div>
               <p className="footer-heading">Company</p>
               <div className="footer-links">
-                <a href="#trust">About</a>
+                <a href="#faq">FAQ</a>
                 <Link href="/help">Support</Link>
                 <Link href="/contact">Contact</Link>
               </div>
