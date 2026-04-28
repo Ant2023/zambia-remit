@@ -20,6 +20,7 @@ from .notifications import (
     notify_for_compliance_event,
     notify_payment_received,
     notify_transaction_failed,
+    notify_transfer_status_change,
 )
 from .payouts import (
     apply_payout_attempt_status,
@@ -356,6 +357,7 @@ def apply_payment_instruction_status(
             changed_by=changed_by,
             note=note or f"Payment marked {instruction.get_status_display().lower()}.",
         )
+        notify_transfer_status_change(transfer, status_event=status_event)
 
     if not is_same_status and target_status == TransferPaymentInstruction.Status.PAID:
         notify_payment_received(
@@ -682,6 +684,7 @@ def transition_transfer_status(
         changed_by=changed_by,
         note=note,
     )
+    notify_transfer_status_change(transfer, status_event=status_event)
 
     update_manual_flag_statuses(
         transfer,

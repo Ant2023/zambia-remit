@@ -16,6 +16,7 @@ from .notifications import (
     PAYOUT_FAILURE_STATUSES,
     notify_payout_complete,
     notify_transaction_failed,
+    notify_transfer_status_change,
 )
 from .payout_providers import get_payout_processor
 
@@ -200,13 +201,14 @@ def update_transfer_for_payout_status(
     transfer.save(update_fields=("status", "payout_status", "updated_at"))
 
     if previous_transfer_status != transfer.status:
-        TransferStatusEvent.objects.create(
+        status_event = TransferStatusEvent.objects.create(
             transfer=transfer,
             from_status=previous_transfer_status,
             to_status=transfer.status,
             changed_by=changed_by,
             note=note,
         )
+        notify_transfer_status_change(transfer, status_event=status_event)
 
 
 @transaction.atomic
@@ -449,13 +451,14 @@ def retry_payout_attempt(
     transfer.payout_status = Transfer.PayoutStatus.RETRYING
     transfer.save(update_fields=("status", "payout_status", "updated_at"))
     if previous_transfer_status != transfer.status:
-        TransferStatusEvent.objects.create(
+        status_event = TransferStatusEvent.objects.create(
             transfer=transfer,
             from_status=previous_transfer_status,
             to_status=transfer.status,
             changed_by=changed_by,
             note=note or "Retrying payout.",
         )
+        notify_transfer_status_change(transfer, status_event=status_event)
 
     record_payout_event(
         transfer=transfer,

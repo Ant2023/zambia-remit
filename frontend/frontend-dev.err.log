@@ -1,3 +1,5 @@
+2026-04-27 12:34:41,915 INFO django.utils.autoreload request_id=- user_id=- Watching for file changes with StatReloader
+2026-04-27 12:34:57,289 INFO django.server request_id=- user_id=- "GET /api/v1/health/ HTTP/1.1" 200 15
 Error: spawn EPERM
     at ChildProcess.spawn (node:internal/child_process:420:11)
     at spawn (node:child_process:753:9)
@@ -11,3 +13,9 @@ Error: spawn EPERM
   code: 'EPERM',
   syscall: 'spawn'
 }
+2026-04-27 12:34:59,544 INFO django.server request_id=- user_id=- - Broken pipe from ('127.0.0.1', 63568)
+2026-04-27 12:41:17,286 INFO django.server request_id=- user_id=- "GET /api/v1/health/ HTTP/1.1" 200 15
+2026-04-27 12:41:17,941 INFO django.server request_id=- user_id=- - Broken pipe from ('127.0.0.1', 63856)
+2026-04-27 12:42:34,049 INFO django.server request_id=- user_id=- "GET /api/v1/countries/sender-countries/ HTTP/1.1" 200 792
+2026-04-27 12:42:34,051 INFO django.server request_id=- user_id=- "GET /api/v1/countries/destination-countries/ HTTP/1.1" 200 266
+2026-04-27 12:52:22,480 INFO django.utils.autoreload request_id=- user_id=- C:\Money Projects\zambia-remit\backend\common\email_providers.py changed, reloading.

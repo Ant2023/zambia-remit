@@ -2,5 +2,16 @@
 > mbongopay-frontend@0.1.0 dev
 > node scripts/dev-with-backend.mjs
 
-[dev] Django backend is already running.
+[dev] Starting Django backend on 127.0.0.1:8000...
+[dev] Django backend is ready.
 [dev] Starting Next.js frontend...
+Performing system checks...
+
+System check identified no issues (0 silenced).
+April 27, 2026 - 12:34:53
+Django version 5.2.13, using settings 'config.settings.dev'
+Starting development server at http://127.0.0.1:8000/
+Quit the server with CTRL-BREAK.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/

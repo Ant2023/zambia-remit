@@ -23,6 +23,7 @@ from apps.quotes.models import ExchangeRate, FeeRule, Quote
 from apps.quotes.services import calculate_fee_amount, get_rate_for_corridor
 from apps.recipients.models import Recipient, RecipientMobileMoneyAccount
 from common.choices import PayoutMethod
+from common.email_providers import send_transactional_email
 
 from .models import (
     RecipientVerificationRule,
@@ -40,7 +41,11 @@ from .models import (
     TransferRiskRule,
     TransferSanctionsCheck,
 )
-from .services import apply_payment_instruction_status, auto_advance_transfer_after_funding
+from .services import (
+    apply_payment_instruction_status,
+    auto_advance_transfer_after_funding,
+    transition_transfer_status,
+)
 
 
 User = get_user_model()
@@ -299,6 +304,10 @@ class CoreTransferProductTests(APITestCase):
         self.assertEqual(payout_attempt.status, TransferPayoutAttempt.Status.SUBMITTED)
         notification_types = set(
             transfer.notifications.values_list("event_type", flat=True),
+        )
+        self.assertIn(
+            TransferNotification.EventType.TRANSFER_IN_PROGRESS,
+            notification_types,
         )
         self.assertIn(
             TransferNotification.EventType.PAYMENT_RECEIVED,
@@ -1123,6 +1132,11 @@ class CoreTransferProductTests(APITestCase):
                 event_type=TransferNotification.EventType.PAYOUT_COMPLETE,
             ).exists(),
         )
+        self.assertTrue(
+            transfer.notifications.filter(
+                event_type=TransferNotification.EventType.TRANSFER_COMPLETED,
+            ).exists(),
+        )
 
     @override_settings(
         PAYOUT_PROVIDER_CONFIGS={
@@ -1685,16 +1699,109 @@ class CoreTransferProductTests(APITestCase):
         )
         self.assertTrue(
             transfer.notifications.filter(
-                event_type=TransferNotification.EventType.TRANSFER_CREATED,
+                event_type=TransferNotification.EventType.TRANSFER_INITIATED,
                 recipient_email=self.sender.email,
             ).exists(),
         )
         self.assertTrue(
             transfer.notifications.filter(
-                event_type=TransferNotification.EventType.TRANSFER_CREATED,
-                subject=f"MbongoPay transfer {transfer.reference} created",
+                event_type=TransferNotification.EventType.TRANSFER_INITIATED,
+                subject=(
+                    "Your MbongoPay transfer has been initiated: "
+                    f"{transfer.reference}"
+                ),
             ).exists(),
         )
+
+    def test_status_notifications_use_customer_safe_language(self):
+        transfer = self.create_transfer(status_value=Transfer.Status.FUNDING_RECEIVED)
+
+        transition_transfer_status(
+            transfer,
+            Transfer.Status.UNDER_REVIEW,
+            changed_by=self.staff,
+            note="Internal compliance review note that should stay private.",
+        )
+        transfer.refresh_from_db()
+        transition_transfer_status(
+            transfer,
+            Transfer.Status.APPROVED,
+            changed_by=self.staff,
+            note="Approved internally.",
+        )
+        transfer.refresh_from_db()
+        transition_transfer_status(
+            transfer,
+            Transfer.Status.PROCESSING_PAYOUT,
+            changed_by=self.staff,
+            note="Submit payout.",
+        )
+
+        notification = transfer.notifications.get(
+            event_type=TransferNotification.EventType.TRANSFER_IN_PROGRESS,
+        )
+        forbidden_terms = (
+            "funding_received",
+            "approved",
+            "processing_payout",
+            "MTN PENDING",
+            "compliance",
+            "Internal compliance review note",
+        )
+        for term in forbidden_terms:
+            self.assertNotIn(term, notification.subject)
+            self.assertNotIn(term, notification.body)
+        self.assertEqual(
+            transfer.notifications.filter(
+                event_type=TransferNotification.EventType.TRANSFER_IN_PROGRESS,
+            ).count(),
+            1,
+        )
+
+    @override_settings(
+        EMAIL_SERVICE_PROVIDER="resend",
+        RESEND_API_KEY="resend-test-key",
+        DEFAULT_FROM_EMAIL="MbongoPay <support@example.com>",
+    )
+    @patch("common.email_providers.request_json")
+    def test_resend_provider_sends_transactional_email(self, mock_request_json):
+        mock_request_json.return_value = {"id": "email_123"}
+
+        result = send_transactional_email(
+            subject="Transfer update",
+            body="Your transfer is in progress.",
+            recipient_emails=["sender@example.com"],
+        )
+
+        self.assertEqual(result.provider_name, "resend")
+        self.assertEqual(result.provider_reference, "email_123")
+        mock_request_json.assert_called_once()
+        payload = mock_request_json.call_args.kwargs["payload"]
+        self.assertEqual(payload["from"], "MbongoPay <support@example.com>")
+        self.assertEqual(payload["to"], ["sender@example.com"])
+        self.assertEqual(payload["subject"], "Transfer update")
+        self.assertEqual(payload["text"], "Your transfer is in progress.")
+
+    @override_settings(EMAIL_SERVICE_PROVIDER="resend", RESEND_API_KEY="")
+    def test_email_delivery_failure_does_not_break_status_flow(self):
+        transfer = self.create_transfer(status_value=Transfer.Status.FUNDING_RECEIVED)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            transition_transfer_status(
+                transfer,
+                Transfer.Status.UNDER_REVIEW,
+                changed_by=self.staff,
+                note="Move forward.",
+            )
+
+        transfer.refresh_from_db()
+        notification = transfer.notifications.get(
+            event_type=TransferNotification.EventType.TRANSFER_IN_PROGRESS,
+        )
+        self.assertEqual(transfer.status, Transfer.Status.UNDER_REVIEW)
+        self.assertEqual(notification.status, TransferNotification.Status.FAILED)
+        self.assertIn("email delivery failed", notification.error)
+        self.assertNotIn("resend-test-key", notification.error)
 
     def test_transfer_creation_copies_quote_fx_metadata(self):
         quote = self.create_quote(send_amount=Decimal("100.00"))

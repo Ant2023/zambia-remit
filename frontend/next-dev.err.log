@@ -1,0 +1,8 @@
+⨯ Another next dev server is already running.
+
+- Local:        http://localhost:3000
+- PID:          10732
+- Dir:          C:\Money Projects\zambia-remit\frontend
+- Log:          .next\dev\logs\next-development.log
+
+Run taskkill /PID 10732 /F to stop it.

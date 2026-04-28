@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import logging
 from typing import Iterable
 
 from django.conf import settings
@@ -21,6 +22,8 @@ from .models import (
 )
 
 
+notification_logger = logging.getLogger("mbongopay.notifications")
+
 PAYMENT_FAILURE_STATUSES = {
     TransferPaymentInstruction.Status.FAILED,
     TransferPaymentInstruction.Status.CANCELLED,
@@ -39,6 +42,53 @@ TRANSFER_FAILURE_STATUSES = {
 PAYOUT_FAILURE_STATUSES = {
     TransferPayoutAttempt.Status.FAILED,
     TransferPayoutAttempt.Status.REVERSED,
+}
+
+CUSTOMER_STATUS_INITIATED = "initiated"
+CUSTOMER_STATUS_IN_PROGRESS = "in_progress"
+CUSTOMER_STATUS_COMPLETED = "completed"
+CUSTOMER_STATUS_FAILED = "failed"
+
+CUSTOMER_STATUS_BY_TRANSFER_STATUS = {
+    Transfer.Status.AWAITING_FUNDING: CUSTOMER_STATUS_INITIATED,
+    Transfer.Status.FUNDING_RECEIVED: CUSTOMER_STATUS_IN_PROGRESS,
+    Transfer.Status.UNDER_REVIEW: CUSTOMER_STATUS_IN_PROGRESS,
+    Transfer.Status.APPROVED: CUSTOMER_STATUS_IN_PROGRESS,
+    Transfer.Status.PROCESSING_PAYOUT: CUSTOMER_STATUS_IN_PROGRESS,
+    Transfer.Status.PAID_OUT: CUSTOMER_STATUS_IN_PROGRESS,
+    Transfer.Status.COMPLETED: CUSTOMER_STATUS_COMPLETED,
+    Transfer.Status.CANCELLED: CUSTOMER_STATUS_FAILED,
+    Transfer.Status.FAILED: CUSTOMER_STATUS_FAILED,
+    Transfer.Status.REJECTED: CUSTOMER_STATUS_FAILED,
+    Transfer.Status.REFUNDED: CUSTOMER_STATUS_FAILED,
+}
+
+CUSTOMER_STATUS_EVENT_TYPES = {
+    CUSTOMER_STATUS_INITIATED: TransferNotification.EventType.TRANSFER_INITIATED,
+    CUSTOMER_STATUS_IN_PROGRESS: TransferNotification.EventType.TRANSFER_IN_PROGRESS,
+    CUSTOMER_STATUS_COMPLETED: TransferNotification.EventType.TRANSFER_COMPLETED,
+    CUSTOMER_STATUS_FAILED: TransferNotification.EventType.TRANSFER_FAILED,
+}
+
+CUSTOMER_STATUS_SUBJECTS = {
+    CUSTOMER_STATUS_INITIATED: "Your MbongoPay transfer has been initiated",
+    CUSTOMER_STATUS_IN_PROGRESS: "Your MbongoPay transfer is in progress",
+    CUSTOMER_STATUS_COMPLETED: "Your MbongoPay transfer is complete",
+    CUSTOMER_STATUS_FAILED: "We could not complete your MbongoPay transfer",
+}
+
+CUSTOMER_STATUS_MESSAGES = {
+    CUSTOMER_STATUS_INITIATED: (
+        "Your transfer has been initiated. We will let you know when it moves forward."
+    ),
+    CUSTOMER_STATUS_IN_PROGRESS: (
+        "Your transfer is moving forward. We will email you again when it is complete."
+    ),
+    CUSTOMER_STATUS_COMPLETED: "Your transfer is complete.",
+    CUSTOMER_STATUS_FAILED: (
+        "We could not complete this transfer. You can review it from your account "
+        "or contact support for help."
+    ),
 }
 
 
@@ -154,9 +204,20 @@ def deliver_email_notification(notification_id) -> None:
         )
     except Exception as exc:  # pragma: no cover - backend-specific delivery failure
         notification.status = TransferNotification.Status.FAILED
-        notification.error = str(exc)
+        notification.error = (
+            f"{exc.__class__.__name__}: email delivery failed. "
+            "No customer flow was interrupted."
+        )
         notification.save(
             update_fields=("attempts", "status", "error", "updated_at"),
+        )
+        notification_logger.warning(
+            "Email notification delivery failed notification_id=%s transfer_id=%s "
+            "event_type=%s provider_error_type=%s",
+            notification.id,
+            notification.transfer_id,
+            notification.event_type,
+            exc.__class__.__name__,
         )
         return
 
@@ -194,7 +255,6 @@ def base_transfer_lines(transfer: Transfer) -> list[str]:
             "Recipient receives: "
             f"{format_money(transfer.receive_amount, transfer.destination_currency.code)}"
         ),
-        f"Status: {transfer.get_status_display()}",
         f"Track this transfer: {transfer_url(transfer)}",
     ]
 
@@ -204,25 +264,56 @@ def notify_transfer_created(
     *,
     status_event: TransferStatusEvent | None = None,
 ) -> None:
-    subject = f"MbongoPay transfer {transfer.reference} created"
-    body = "\n".join(
-        [
-            f"Hi {sender_name(transfer)},",
-            "",
-            "Your MbongoPay transfer has been created and is awaiting payment.",
-            "",
-            *base_transfer_lines(transfer),
-            "",
-            "We will email you as the payment and payout move forward.",
-        ],
-    )
-    queue_email_notification(
-        transfer=transfer,
-        event_type=TransferNotification.EventType.TRANSFER_CREATED,
-        subject=subject,
-        body=body,
-        trigger=status_event or transfer,
-        metadata={"status": transfer.status},
+    notify_transfer_status_change(transfer, status_event=status_event)
+
+
+class TransferStatusNotificationService:
+    def notify(
+        self,
+        transfer: Transfer,
+        *,
+        status_event: TransferStatusEvent | None = None,
+    ) -> TransferNotification | None:
+        customer_status = CUSTOMER_STATUS_BY_TRANSFER_STATUS.get(transfer.status)
+        if not customer_status:
+            return None
+
+        body = "\n".join(
+            [
+                f"Hi {sender_name(transfer)},",
+                "",
+                CUSTOMER_STATUS_MESSAGES[customer_status],
+                "",
+                *base_transfer_lines(transfer),
+                "",
+                "Thank you for using MbongoPay.",
+            ],
+        )
+        return queue_email_notification(
+            transfer=transfer,
+            event_type=CUSTOMER_STATUS_EVENT_TYPES[customer_status],
+            subject=(
+                f"{CUSTOMER_STATUS_SUBJECTS[customer_status]}: "
+                f"{transfer.reference}"
+            ),
+            body=body,
+            trigger=transfer,
+            metadata={
+                "customer_status": customer_status,
+                "status_event_id": str(status_event.id) if status_event else "",
+            },
+            dedupe_suffix=customer_status,
+        )
+
+
+def notify_transfer_status_change(
+    transfer: Transfer,
+    *,
+    status_event: TransferStatusEvent | None = None,
+) -> TransferNotification | None:
+    return TransferStatusNotificationService().notify(
+        transfer,
+        status_event=status_event,
     )
 
 

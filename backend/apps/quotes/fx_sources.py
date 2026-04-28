@@ -271,7 +271,7 @@ class FrankfurterFxRateSource(BaseFxRateSource):
             "FX_RATE_SOURCE_CONFIGS",
             self.code,
             default_display_name=self.display_name,
-            defaults={"base_url": "https://api.frankfurter.dev"},
+            defaults={"base_url": "https://api.frankfurter.app"},
         )
         self.display_name = self.config.display_name
 

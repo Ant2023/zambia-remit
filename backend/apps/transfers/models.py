@@ -1221,6 +1221,10 @@ class TransferNotification(BaseModel):
 
     class EventType(models.TextChoices):
         TRANSFER_CREATED = "transfer_created", "Transfer created"
+        TRANSFER_INITIATED = "transfer_initiated", "Transfer initiated"
+        TRANSFER_IN_PROGRESS = "transfer_in_progress", "Transfer in progress"
+        TRANSFER_COMPLETED = "transfer_completed", "Transfer completed"
+        TRANSFER_FAILED = "transfer_failed", "Transfer failed"
         PAYMENT_RECEIVED = "payment_received", "Payment received"
         PAYOUT_COMPLETE = "payout_complete", "Payout complete"
         TRANSACTION_FAILED = "transaction_failed", "Transaction failed"

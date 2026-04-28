@@ -5,10 +5,16 @@ from dataclasses import dataclass
 from django.conf import settings
 from django.core.mail import send_mail
 
-from .integrations import get_provider_config, redact_sensitive, request_json
+from .integrations import (
+    ProviderConfigurationError,
+    get_provider_config,
+    redact_sensitive,
+    request_json,
+)
 
 
 DJANGO_EMAIL_BACKEND = "django_email_backend"
+RESEND_EMAIL_PROVIDER = "resend"
 
 
 @dataclass(frozen=True)
@@ -105,6 +111,60 @@ class GenericApiEmailProvider(BaseEmailProvider):
         )
 
 
+class ResendEmailProvider(BaseEmailProvider):
+    code = RESEND_EMAIL_PROVIDER
+    display_name = "Resend"
+
+    def __init__(self):
+        self.config = get_provider_config(
+            "EMAIL_SERVICE_CONFIGS",
+            self.code,
+            default_display_name=self.display_name,
+            defaults={
+                "base_url": getattr(
+                    settings,
+                    "RESEND_BASE_URL",
+                    "https://api.resend.com",
+                ),
+                "api_key": getattr(settings, "RESEND_API_KEY", ""),
+                "send_path": "/emails",
+            },
+        )
+        self.display_name = self.config.display_name
+
+    def send_email(
+        self,
+        *,
+        subject: str,
+        body: str,
+        from_email: str,
+        recipient_emails: list[str],
+        metadata: dict | None = None,
+    ) -> EmailSendResult:
+        if not self.config.api_key:
+            raise ProviderConfigurationError("Resend requires RESEND_API_KEY.")
+
+        payload = {
+            "from": from_email,
+            "to": recipient_emails,
+            "subject": subject,
+            "text": body,
+        }
+        response = request_json(
+            config=self.config,
+            path=str(self.config.metadata.get("send_path") or "/emails"),
+            payload=payload,
+            method="POST",
+            headers={"User-Agent": "MbongoPay Backend/1.0"},
+        )
+        provider_reference = str(response.get("id") or "")
+        return EmailSendResult(
+            provider_name=self.code,
+            provider_reference=provider_reference,
+            response_payload=redact_sensitive(response),
+        )
+
+
 def get_email_provider(provider_name: str | None = None) -> BaseEmailProvider:
     selected_provider = provider_name or getattr(
         settings,
@@ -113,6 +173,8 @@ def get_email_provider(provider_name: str | None = None) -> BaseEmailProvider:
     )
     if selected_provider == DJANGO_EMAIL_BACKEND:
         return DjangoEmailBackendProvider()
+    if selected_provider == RESEND_EMAIL_PROVIDER:
+        return ResendEmailProvider()
 
     configured_providers = getattr(settings, "EMAIL_SERVICE_CONFIGS", {}) or {}
     if selected_provider in configured_providers:
