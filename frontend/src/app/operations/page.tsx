@@ -834,7 +834,7 @@ export default function OperationsPage() {
 
   return (
     <>
-      <AppNavbar />
+      <AppNavbar publicOnly variant="home" />
       <main className="page">
         <div className="shell stack">
           <header className="topbar">

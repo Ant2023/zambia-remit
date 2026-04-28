@@ -41,10 +41,15 @@ type AppNavbarProps = {
     label: string;
     src: string;
   }>;
+  publicOnly?: boolean;
   variant?: "app" | "home";
 };
 
-export function AppNavbar({ flagRibbonItems, variant = "app" }: AppNavbarProps) {
+export function AppNavbar({
+  flagRibbonItems,
+  publicOnly = false,
+  variant = "app",
+}: AppNavbarProps) {
   const router = useRouter();
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -112,13 +117,14 @@ export function AppNavbar({ flagRibbonItems, variant = "app" }: AppNavbarProps) 
     router.push("/login?mode=login&next=/send");
   }
 
-  const isStaff = Boolean(authSession?.user.is_staff);
-  const startHref = isStaff ? "/operations" : authSession ? "/send?new=1" : "/start";
-  const transferStartHref = authSession ? "/send" : "/start";
+  const visibleAuthSession = publicOnly ? null : authSession;
+  const isStaff = Boolean(visibleAuthSession?.user.is_staff);
+  const startHref = isStaff ? "/operations" : visibleAuthSession ? "/send?new=1" : "/start";
+  const transferStartHref = visibleAuthSession ? "/send" : "/start";
   const isHomeVariant = variant === "home";
   const accountLabel = isHomeVariant
-    ? authSession?.user.email || getAccountLabel(authSession)
-    : getAccountLabel(authSession);
+    ? visibleAuthSession?.user.email || getAccountLabel(visibleAuthSession)
+    : getAccountLabel(visibleAuthSession);
   const publicAnchorPrefix = flagRibbonItems ? "" : "/";
   const renderedFlagRibbonItems = isHomeVariant
     ? (flagRibbonItems ?? DEFAULT_PUBLIC_FLAG_RIBBON_ITEMS)
@@ -171,7 +177,7 @@ export function AppNavbar({ flagRibbonItems, variant = "app" }: AppNavbarProps) 
         </nav>
 
         <div className="premium-actions">
-          {authSession ? (
+          {visibleAuthSession ? (
             <>
               <span className="signed-in-label">{accountLabel}</span>
               <button
@@ -294,7 +300,7 @@ export function AppNavbar({ flagRibbonItems, variant = "app" }: AppNavbarProps) 
               </Link>
             </>
           )}
-          {authSession ? (
+          {visibleAuthSession ? (
             <button type="button" onClick={handleLogout}>
               Log out
             </button>
