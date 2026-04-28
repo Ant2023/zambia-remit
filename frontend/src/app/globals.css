@@ -3054,7 +3054,7 @@ th {
 
 .coverage-route-grid {
   display: flex;
-  animation: coverage-row-slide 44s linear infinite;
+  animation: coverage-row-slide var(--coverage-slide-duration, 24s) linear infinite;
   will-change: transform;
 }
 
@@ -4485,6 +4485,7 @@ th {
   }
 
   .coverage-route-grid {
+    --coverage-slide-duration: 16s;
     margin: 0;
     padding: 0;
   }
