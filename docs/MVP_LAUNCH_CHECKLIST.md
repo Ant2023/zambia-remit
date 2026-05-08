@@ -91,6 +91,14 @@ Run encrypted database backups from a host with `pg_dump` available:
 .\.venv\Scripts\python.exe manage.py backup_database
 ```
 
+## Internal Operations Exports
+
+Staff-only CSV exports are available for transfer records, compliance review
+events, and operational audit logs under the backend operations API. These
+exports are for internal traceability only and must not include raw provider
+payloads, card data, verification documents, KYC document details, provider
+secrets, or other sensitive payment/payout data.
+
 ## Frontend Pre-Deploy Commands
 
 ```powershell

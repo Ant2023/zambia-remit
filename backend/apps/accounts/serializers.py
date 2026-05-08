@@ -219,7 +219,6 @@ class SenderProfileSerializer(serializers.ModelSerializer):
             "kyc_status_display",
             "kyc_submitted_at",
             "kyc_reviewed_at",
-            "kyc_review_note",
             "is_complete",
             "created_at",
             "updated_at",
@@ -233,7 +232,6 @@ class SenderProfileSerializer(serializers.ModelSerializer):
             "kyc_status_display",
             "kyc_submitted_at",
             "kyc_reviewed_at",
-            "kyc_review_note",
             "is_complete",
             "created_at",
             "updated_at",
@@ -323,18 +321,11 @@ class SenderDocumentSerializer(serializers.ModelSerializer):
         read_only=True,
     )
     status_display = serializers.CharField(source="get_status_display", read_only=True)
-    sender_email = serializers.EmailField(
-        source="sender_profile.user.email",
-        read_only=True,
-    )
-    reviewed_by_email = serializers.EmailField(source="reviewed_by.email", read_only=True)
 
     class Meta:
         model = SenderDocument
         fields = (
             "id",
-            "sender_profile",
-            "sender_email",
             "document_type",
             "document_type_display",
             "status",
@@ -342,10 +333,7 @@ class SenderDocumentSerializer(serializers.ModelSerializer):
             "original_filename",
             "content_type",
             "file_size",
-            "sha256_digest",
-            "reviewed_by_email",
             "reviewed_at",
-            "review_note",
             "created_at",
             "updated_at",
         )
@@ -353,6 +341,24 @@ class SenderDocumentSerializer(serializers.ModelSerializer):
 
     def get_original_filename(self, obj):
         return obj.original_filename
+
+
+class StaffSenderDocumentSerializer(SenderDocumentSerializer):
+    sender_email = serializers.EmailField(
+        source="sender_profile.user.email",
+        read_only=True,
+    )
+    reviewed_by_email = serializers.EmailField(source="reviewed_by.email", read_only=True)
+
+    class Meta(SenderDocumentSerializer.Meta):
+        fields = SenderDocumentSerializer.Meta.fields + (
+            "sender_profile",
+            "sender_email",
+            "sha256_digest",
+            "reviewed_by_email",
+            "review_note",
+        )
+        read_only_fields = fields
 
 
 class SenderDocumentUploadSerializer(serializers.Serializer):

@@ -121,6 +121,23 @@ class QuotePayoutRouteTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("not available", str(response.data["payout_method"]))
 
+    def test_rate_estimate_allows_unit_amount_preview_without_fee_total(self):
+        response = self.client.get(
+            reverse("rate-estimate"),
+            {
+                "source_country_id": str(self.us.id),
+                "destination_country_id": str(self.zambia.id),
+                "send_amount": "1.00",
+                "payout_method": PayoutMethod.MOBILE_MONEY,
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(str(response.data["exchange_rate"]), "25.50000000")
+        self.assertEqual(str(response.data["receive_amount"]), "25.50")
+        self.assertIsNone(response.data["fee_amount"])
+        self.assertIsNone(response.data["total_amount"])
+
     @override_settings(
         FX_RATE_SOURCE="open_exchange_rates",
         FX_RATE_SOURCE_CONFIGS={

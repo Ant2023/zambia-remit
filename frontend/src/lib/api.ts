@@ -104,7 +104,6 @@ export type SenderProfile = {
   kyc_status_display: string;
   kyc_submitted_at: string | null;
   kyc_reviewed_at: string | null;
-  kyc_review_note: string;
   is_complete: boolean;
   created_at: string;
   updated_at: string;
@@ -172,7 +171,6 @@ export type Recipient = {
   verification_status_display: string;
   verification_submitted_at: string | null;
   verification_reviewed_at: string | null;
-  verification_review_note: string;
   is_verification_ready: boolean;
   mobile_money_accounts: Array<{
     id: string;
@@ -216,6 +214,19 @@ export type Quote = {
   updated_at: string;
 };
 
+export type TransferStatusEvent = {
+  id: string;
+  from_status: string;
+  from_status_display: string;
+  to_status: string;
+  to_status_display: string;
+  created_at: string;
+};
+
+export type StaffTransferStatusEvent = TransferStatusEvent & {
+  note: string;
+};
+
 export type Transfer = {
   id: string;
   reference: string;
@@ -231,8 +242,6 @@ export type Transfer = {
   destination_currency: string;
   destination_currency_details: Currency;
   payout_method: "mobile_money" | "bank_deposit";
-  payout_provider: string | null;
-  payout_provider_details: PayoutProvider | null;
   send_amount: string;
   fee_amount: string;
   exchange_rate: string;
@@ -253,16 +262,7 @@ export type Transfer = {
   sender_email: string;
   sender_name: string;
   latest_payment_instruction: PaymentInstruction | null;
-  latest_payout_attempt: PayoutAttempt | null;
-  status_events: Array<{
-    id: string;
-    from_status: string;
-    from_status_display: string;
-    to_status: string;
-    to_status_display: string;
-    note: string;
-    created_at: string;
-  }>;
+  status_events: TransferStatusEvent[];
   created_at: string;
   updated_at: string;
 };
@@ -329,7 +329,11 @@ export type AllowedTransferStatus = {
   label: string;
 };
 
-export type OperationalTransfer = Transfer & {
+export type OperationalTransfer = Omit<Transfer, "status_events"> & {
+  payout_provider: string | null;
+  payout_provider_details: PayoutProvider | null;
+  latest_payout_attempt: PayoutAttempt | null;
+  status_events: StaffTransferStatusEvent[];
   allowed_next_statuses: AllowedTransferStatus[];
   compliance_flags: ComplianceFlag[];
   compliance_events: ComplianceEvent[];
@@ -458,8 +462,8 @@ export type PaymentInstruction = {
   transfer: string;
   payment_method: MockPaymentMethod;
   payment_method_display: string;
-  provider_name: string;
-  provider_reference: string;
+  provider_name?: string;
+  provider_reference?: string;
   amount: string;
   currency: Currency;
   status: string;

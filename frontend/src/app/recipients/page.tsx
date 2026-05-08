@@ -441,12 +441,6 @@ export default function RecipientsPage() {
                     </div>
                   </dl>
 
-                  {selectedRecipient.verification_review_note ? (
-                    <p className="notice small">
-                      {selectedRecipient.verification_review_note}
-                    </p>
-                  ) : null}
-
                   <div className="row">
                     {selectedRecipient.is_verification_ready &&
                     selectedRecipient.verification_status !== "pending" &&

@@ -464,10 +464,6 @@ export default function ProfilePage() {
                     </div>
                   </dl>
 
-                  {profile?.kyc_review_note ? (
-                    <p className="notice small">{profile.kyc_review_note}</p>
-                  ) : null}
-
                   {profile?.kyc_status === "pending" ? (
                     <p className="notice small">
                       Verification is pending staff review.

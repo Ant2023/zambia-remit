@@ -23,10 +23,6 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
-function formatProviderName(value?: string) {
-  return value ? value.replaceAll("_", " ") : "Not prepared";
-}
-
 function formatPayoutMethod(value: Transfer["payout_method"]) {
   return value === "mobile_money" ? "Mobile money" : "Bank deposit";
 }
@@ -354,21 +350,6 @@ export default function SuccessPage() {
                       <dt>Method</dt>
                       <dd>
                         {transfer.latest_payment_instruction?.payment_method_display ??
-                          "Not prepared"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Provider</dt>
-                      <dd>
-                        {formatProviderName(
-                          transfer.latest_payment_instruction?.provider_name,
-                        )}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Payment reference</dt>
-                      <dd>
-                        {transfer.latest_payment_instruction?.provider_reference ??
                           "Not prepared"}
                       </dd>
                     </div>

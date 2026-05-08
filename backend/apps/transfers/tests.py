@@ -24,6 +24,7 @@ from apps.quotes.services import calculate_fee_amount, get_rate_for_corridor
 from apps.recipients.models import Recipient, RecipientMobileMoneyAccount
 from common.choices import PayoutMethod
 from common.email_providers import send_transactional_email
+from common.models import OperationalAuditLog
 
 from .models import (
     RecipientVerificationRule,
@@ -40,6 +41,7 @@ from .models import (
     TransferNotification,
     TransferRiskRule,
     TransferSanctionsCheck,
+    TransferStatusEvent,
 )
 from .services import (
     apply_payment_instruction_status,
@@ -232,6 +234,56 @@ class CoreTransferProductTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_customer_transfer_detail_hides_internal_provider_and_review_data(self):
+        transfer = self.create_transfer(status_value=Transfer.Status.PROCESSING_PAYOUT)
+        instruction = TransferPaymentInstruction.objects.create(
+            transfer=transfer,
+            payment_method=TransferPaymentInstruction.PaymentMethod.DEBIT_CARD,
+            provider_name="internal_card_processor",
+            amount=transfer.send_amount + transfer.fee_amount,
+            currency=self.usd,
+            status=TransferPaymentInstruction.Status.PAID,
+            status_reason="Internal processor message.",
+        )
+        TransferPayoutAttempt.objects.create(
+            transfer=transfer,
+            provider=self.payout_provider,
+            payout_method=PayoutMethod.MOBILE_MONEY,
+            attempt_number=1,
+            amount=transfer.receive_amount,
+            currency=self.zmw,
+            status=TransferPayoutAttempt.Status.SUBMITTED,
+            request_payload={"secret": "do-not-expose"},
+            response_payload={"provider_status": "do-not-expose"},
+        )
+        TransferStatusEvent.objects.create(
+            transfer=transfer,
+            from_status=Transfer.Status.UNDER_REVIEW,
+            to_status=Transfer.Status.PROCESSING_PAYOUT,
+            changed_by=self.staff,
+            note="Internal operations note.",
+        )
+        self.client.force_authenticate(self.sender)
+
+        response = self.client.get(
+            reverse("transfer-detail", kwargs={"pk": transfer.pk}),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertNotIn("payout_provider", response.data)
+        self.assertNotIn("payout_provider_details", response.data)
+        self.assertNotIn("latest_payout_attempt", response.data)
+        self.assertNotIn("note", response.data["status_events"][0])
+        payment_instruction = response.data["latest_payment_instruction"]
+        self.assertEqual(payment_instruction["id"], str(instruction.id))
+        self.assertNotIn("provider_name", payment_instruction)
+        self.assertNotIn("provider_reference", payment_instruction)
+        serialized_response = json.dumps(response.data, default=str)
+        self.assertNotIn("request_payload", serialized_response)
+        self.assertNotIn("response_payload", serialized_response)
+        self.assertNotIn("do-not-expose", serialized_response)
+        self.assertNotIn("Internal operations note.", serialized_response)
+
     def test_payment_instruction_and_mock_funding_complete_transfer(self):
         transfer = self.create_transfer()
         self.client.force_authenticate(self.sender)
@@ -383,7 +435,10 @@ class CoreTransferProductTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["provider_name"], "hosted_card_provider")
+        instruction = TransferPaymentInstruction.objects.get(id=response.data["id"])
+        self.assertEqual(instruction.provider_name, "hosted_card_provider")
+        self.assertNotIn("provider_name", response.data)
+        self.assertNotIn("provider_reference", response.data)
         instructions = response.data["instructions"]
         self.assertEqual(instructions["integration_mode"], "hosted_card_checkout")
         self.assertEqual(instructions["checkout_url"], "https://checkout.example/pay")
@@ -735,6 +790,22 @@ class CoreTransferProductTests(APITestCase):
         )
         flag = transfer.compliance_flags.get(code="PAYMENT_COMPLIANCE_HOLD")
         self.assertEqual(flag.category, TransferComplianceFlag.Category.PAYMENT)
+
+    @override_settings(DEBUG=False, PAYMENT_WEBHOOK_SECRETS={})
+    def test_payment_webhook_requires_configured_secret_in_production(self):
+        self.client.force_authenticate(user=None)
+
+        response = self.client.post(
+            reverse(
+                "transfer-payment-webhook",
+                kwargs={"provider_name": "mock_card_processor"},
+            ),
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("not configured", str(response.data["detail"]))
 
     def test_payment_webhook_paid_event_marks_instruction_paid_and_logs_event(self):
         transfer = self.create_transfer()
@@ -1127,6 +1198,15 @@ class CoreTransferProductTests(APITestCase):
             transfer.status_events.filter(to_status=Transfer.Status.COMPLETED).count(),
             1,
         )
+        audit_log = OperationalAuditLog.objects.get(
+            action_name="transfer.status_transition",
+            target_id=str(transfer.id),
+            new_status=Transfer.Status.COMPLETED,
+        )
+        self.assertEqual(audit_log.actor, self.staff)
+        self.assertEqual(audit_log.target_reference, transfer.reference)
+        self.assertEqual(audit_log.previous_status, Transfer.Status.PAID_OUT)
+        self.assertEqual(audit_log.note, "Move to completed.")
         self.assertTrue(
             transfer.notifications.filter(
                 event_type=TransferNotification.EventType.PAYOUT_COMPLETE,
@@ -1483,6 +1563,22 @@ class CoreTransferProductTests(APITestCase):
             1,
         )
 
+    @override_settings(DEBUG=False, PAYOUT_WEBHOOK_SECRETS={})
+    def test_payout_webhook_requires_configured_secret_in_production(self):
+        self.client.force_authenticate(user=None)
+
+        response = self.client.post(
+            reverse(
+                "transfer-payout-webhook",
+                kwargs={"provider_code": self.payout_provider.code},
+            ),
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("not configured", str(response.data["detail"]))
+
     def test_paid_out_payout_can_be_reversed(self):
         transfer = self.create_transfer(status_value=Transfer.Status.FUNDING_RECEIVED)
         self.client.force_authenticate(self.staff)
@@ -1676,6 +1772,112 @@ class CoreTransferProductTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_staff_can_export_transfer_records_csv(self):
+        transfer = self.create_transfer(status_value=Transfer.Status.COMPLETED)
+        self.client.force_authenticate(self.staff)
+
+        response = self.client.get(reverse("transfer-operations-export-transfers"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("text/csv", response["Content-Type"])
+        self.assertIn("attachment", response["Content-Disposition"])
+
+        csv_text = response.content.decode()
+        header = csv_text.splitlines()[0]
+        self.assertIn("transfer_reference", header)
+        self.assertIn("sender_email", header)
+        self.assertIn("recipient_name", header)
+        self.assertIn("send_amount", header)
+        self.assertIn("receive_amount", header)
+        self.assertIn("fee_amount", header)
+        self.assertNotIn("provider_reference", header)
+        self.assertNotIn("request_payload", header)
+        self.assertNotIn("response_payload", header)
+        self.assertNotIn("card", header.lower())
+        self.assertIn(transfer.reference, csv_text)
+        self.assertIn(self.sender.email, csv_text)
+        self.assertIn("Mary Banda", csv_text)
+
+    def test_staff_can_export_compliance_records_csv(self):
+        transfer = self.create_transfer(status_value=Transfer.Status.UNDER_REVIEW)
+        TransferComplianceEvent.objects.create(
+            transfer=transfer,
+            action=TransferComplianceEvent.Action.NOTE,
+            from_compliance_status=Transfer.ComplianceStatus.FLAGGED,
+            to_compliance_status=Transfer.ComplianceStatus.UNDER_REVIEW,
+            from_transfer_status=Transfer.Status.FUNDING_RECEIVED,
+            to_transfer_status=Transfer.Status.UNDER_REVIEW,
+            note="Customer supplied clarification.",
+            performed_by=self.staff,
+            metadata={"internal_score": "do-not-export"},
+        )
+        self.client.force_authenticate(self.staff)
+
+        response = self.client.get(reverse("transfer-operations-export-compliance"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("text/csv", response["Content-Type"])
+
+        csv_text = response.content.decode()
+        header = csv_text.splitlines()[0]
+        self.assertIn("transfer_reference", header)
+        self.assertIn("action", header)
+        self.assertIn("from_compliance_status", header)
+        self.assertIn("to_compliance_status", header)
+        self.assertIn("performed_by_email", header)
+        self.assertNotIn("metadata", header)
+        self.assertNotIn("screening_payload", header)
+        self.assertNotIn("response_payload", header)
+        self.assertIn(transfer.reference, csv_text)
+        self.assertIn("Customer supplied clarification.", csv_text)
+        self.assertNotIn("do-not-export", csv_text)
+
+    def test_staff_can_export_operational_audit_logs_csv(self):
+        audit_log = OperationalAuditLog.objects.create(
+            actor=self.staff,
+            action_name="transfer.status_transition",
+            target_type="transfer",
+            target_id="internal-target-id",
+            target_reference="TRFEXPORT123",
+            previous_status=Transfer.Status.UNDER_REVIEW,
+            new_status=Transfer.Status.APPROVED,
+            note="Reviewed by operations.",
+            request_ip="203.0.113.10",
+            user_agent="UnitTest/1.0",
+            metadata={"provider_payload": "do-not-export"},
+        )
+        self.client.force_authenticate(self.staff)
+
+        response = self.client.get(reverse("transfer-operations-export-audit"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("text/csv", response["Content-Type"])
+
+        csv_text = response.content.decode()
+        header = csv_text.splitlines()[0]
+        self.assertIn("audit_id", header)
+        self.assertIn("actor_email", header)
+        self.assertIn("action", header)
+        self.assertIn("target_reference", header)
+        self.assertIn("previous_status", header)
+        self.assertIn("new_status", header)
+        self.assertIn("request_ip", header)
+        self.assertNotIn("metadata", header)
+        self.assertNotIn("provider_payload", csv_text)
+        self.assertIn(str(audit_log.id), csv_text)
+        self.assertIn("TRFEXPORT123", csv_text)
+
+    def test_operation_exports_require_staff_access(self):
+        self.client.force_authenticate(self.sender)
+
+        for route_name in (
+            "transfer-operations-export-transfers",
+            "transfer-operations-export-compliance",
+            "transfer-operations-export-audit",
+        ):
+            response = self.client.get(reverse(route_name))
+            self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
     def test_transfer_creation_selects_payout_provider_from_corridor_route(self):
         quote = self.create_quote(send_amount=Decimal("100.00"))
         self.client.force_authenticate(self.sender)
@@ -1693,10 +1895,8 @@ class CoreTransferProductTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         transfer = Transfer.objects.get(id=response.data["id"])
         self.assertEqual(transfer.payout_provider, self.payout_provider)
-        self.assertEqual(
-            response.data["payout_provider_details"]["code"],
-            "internal_mobile_money",
-        )
+        self.assertNotIn("payout_provider", response.data)
+        self.assertNotIn("payout_provider_details", response.data)
         self.assertTrue(
             transfer.notifications.filter(
                 event_type=TransferNotification.EventType.TRANSFER_INITIATED,
@@ -2019,6 +2219,17 @@ class CoreTransferProductTests(APITestCase):
             "Reviewed sender information before escalation.",
         )
         self.assertEqual(event.performed_by, self.staff)
+        audit_log = OperationalAuditLog.objects.get(
+            action_name="transfer.compliance_action",
+            target_id=str(transfer.id),
+        )
+        self.assertEqual(audit_log.actor, self.staff)
+        self.assertEqual(audit_log.previous_status, Transfer.ComplianceStatus.CLEAR)
+        self.assertEqual(audit_log.new_status, Transfer.ComplianceStatus.CLEAR)
+        self.assertEqual(
+            audit_log.metadata["compliance_action"],
+            TransferComplianceEvent.Action.NOTE,
+        )
 
     def test_staff_can_put_transfer_on_manual_compliance_hold(self):
         transfer = self.create_transfer(status_value=Transfer.Status.FUNDING_RECEIVED)

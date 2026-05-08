@@ -130,3 +130,15 @@ class RecipientVerificationFlowTests(APITestCase):
             "changed after verification",
             self.recipient.verification_review_note,
         )
+
+    def test_customer_recipient_response_hides_internal_review_note(self):
+        self.recipient.verification_review_note = "Internal recipient review note."
+        self.recipient.save(update_fields=("verification_review_note", "updated_at"))
+        self.client.force_authenticate(self.customer)
+
+        response = self.client.get(
+            reverse("recipient-detail", kwargs={"pk": self.recipient.id}),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertNotIn("verification_review_note", response.data)

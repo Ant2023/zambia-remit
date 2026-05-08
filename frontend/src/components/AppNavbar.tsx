@@ -154,7 +154,7 @@ export function AppNavbar({
             <>
               <Link href={`${publicAnchorPrefix}#how-it-works`}>How it works</Link>
               <Link href={`${publicAnchorPrefix}#preview`}>Rates</Link>
-              <Link href={`${publicAnchorPrefix}#trust`}>Security</Link>
+              <Link href="/compliance">Security</Link>
               <Link href="/help">Help</Link>
             </>
           ) : (
@@ -257,10 +257,7 @@ export function AppNavbar({
               >
                 Rates
               </Link>
-              <Link
-                href={`${publicAnchorPrefix}#trust`}
-                onClick={() => setIsMobileMenuOpen(false)}
-              >
+              <Link href="/compliance" onClick={() => setIsMobileMenuOpen(false)}>
                 Security
               </Link>
               <Link href="/help" onClick={() => setIsMobileMenuOpen(false)}>

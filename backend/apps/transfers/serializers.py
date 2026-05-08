@@ -57,7 +57,6 @@ class TransferStatusEventSerializer(serializers.ModelSerializer):
             "from_status_display",
             "to_status",
             "to_status_display",
-            "note",
             "created_at",
         )
         read_only_fields = fields
@@ -69,6 +68,12 @@ class TransferStatusEventSerializer(serializers.ModelSerializer):
 
     def get_to_status_display(self, obj):
         return dict(Transfer.Status.choices).get(obj.to_status, obj.to_status)
+
+
+class StaffTransferStatusEventSerializer(TransferStatusEventSerializer):
+    class Meta(TransferStatusEventSerializer.Meta):
+        fields = TransferStatusEventSerializer.Meta.fields + ("note",)
+        read_only_fields = fields
 
 
 class TransferPaymentInstructionCreateSerializer(serializers.Serializer):
@@ -428,8 +433,6 @@ class TransferPaymentInstructionSerializer(serializers.ModelSerializer):
             "transfer",
             "payment_method",
             "payment_method_display",
-            "provider_name",
-            "provider_reference",
             "amount",
             "currency",
             "status",
@@ -458,6 +461,15 @@ class TransferPaymentInstructionSerializer(serializers.ModelSerializer):
             for key, value in obj.instructions.items()
             if key not in sensitive_keys and not key.endswith("_encrypted")
         }
+
+
+class StaffTransferPaymentInstructionSerializer(TransferPaymentInstructionSerializer):
+    class Meta(TransferPaymentInstructionSerializer.Meta):
+        fields = TransferPaymentInstructionSerializer.Meta.fields + (
+            "provider_name",
+            "provider_reference",
+        )
+        read_only_fields = fields
 
 
 class TransferComplianceFlagSerializer(serializers.ModelSerializer):
@@ -612,6 +624,23 @@ class StaffReportQuerySerializer(serializers.Serializer):
         return attrs
 
 
+class StaffExportQuerySerializer(StaffReportQuerySerializer):
+    status = serializers.CharField(required=False, allow_blank=True, max_length=32)
+    sender_email = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=254,
+    )
+    destination_country = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=120,
+    )
+    q = serializers.CharField(required=False, allow_blank=True, max_length=160)
+    action = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    target_type = serializers.CharField(required=False, allow_blank=True, max_length=120)
+
+
 class TransferSanctionsCheckReviewSerializer(serializers.Serializer):
     status = serializers.ChoiceField(
         choices=(
@@ -756,7 +785,6 @@ class TransferSerializer(serializers.ModelSerializer):
     )
     status_events = TransferStatusEventSerializer(many=True, read_only=True)
     latest_payment_instruction = serializers.SerializerMethodField()
-    latest_payout_attempt = serializers.SerializerMethodField()
     sender_email = serializers.EmailField(source="sender.email", read_only=True)
     sender_name = serializers.SerializerMethodField()
     recipient_details = RecipientSerializer(source="recipient", read_only=True)
@@ -768,10 +796,6 @@ class TransferSerializer(serializers.ModelSerializer):
     source_currency_details = CurrencySerializer(source="source_currency", read_only=True)
     destination_currency_details = CurrencySerializer(
         source="destination_currency",
-        read_only=True,
-    )
-    payout_provider_details = PayoutProviderSerializer(
-        source="payout_provider",
         read_only=True,
     )
 
@@ -793,8 +817,6 @@ class TransferSerializer(serializers.ModelSerializer):
             "destination_currency",
             "destination_currency_details",
             "payout_method",
-            "payout_provider",
-            "payout_provider_details",
             "send_amount",
             "fee_amount",
             "exchange_rate",
@@ -817,7 +839,6 @@ class TransferSerializer(serializers.ModelSerializer):
             "recipient_details",
             "status_events",
             "latest_payment_instruction",
-            "latest_payout_attempt",
             "created_at",
             "updated_at",
         )
@@ -835,8 +856,6 @@ class TransferSerializer(serializers.ModelSerializer):
             "destination_currency",
             "destination_currency_details",
             "payout_method",
-            "payout_provider",
-            "payout_provider_details",
             "send_amount",
             "fee_amount",
             "exchange_rate",
@@ -858,7 +877,6 @@ class TransferSerializer(serializers.ModelSerializer):
             "recipient_details",
             "status_events",
             "latest_payment_instruction",
-            "latest_payout_attempt",
             "created_at",
             "updated_at",
         )
@@ -868,12 +886,6 @@ class TransferSerializer(serializers.ModelSerializer):
         if not instruction:
             return None
         return TransferPaymentInstructionSerializer(instruction).data
-
-    def get_latest_payout_attempt(self, obj):
-        attempt = obj.payout_attempts.first()
-        if not attempt:
-            return None
-        return TransferPayoutAttemptSerializer(attempt).data
 
     def get_sender_name(self, obj):
         name = f"{obj.sender.first_name} {obj.sender.last_name}".strip()
@@ -1000,6 +1012,13 @@ class TransferSerializer(serializers.ModelSerializer):
 
 class StaffTransferSerializer(TransferSerializer):
     allowed_next_statuses = serializers.SerializerMethodField()
+    status_events = StaffTransferStatusEventSerializer(many=True, read_only=True)
+    latest_payment_instruction = serializers.SerializerMethodField()
+    latest_payout_attempt = serializers.SerializerMethodField()
+    payout_provider_details = PayoutProviderSerializer(
+        source="payout_provider",
+        read_only=True,
+    )
     compliance_flags = TransferComplianceFlagSerializer(many=True, read_only=True)
     compliance_events = TransferComplianceEventSerializer(many=True, read_only=True)
     sanctions_checks = TransferSanctionsCheckSerializer(many=True, read_only=True)
@@ -1009,6 +1028,9 @@ class StaffTransferSerializer(TransferSerializer):
 
     class Meta(TransferSerializer.Meta):
         fields = TransferSerializer.Meta.fields + (
+            "payout_provider",
+            "payout_provider_details",
+            "latest_payout_attempt",
             "allowed_next_statuses",
             "compliance_flags",
             "compliance_events",
@@ -1018,6 +1040,9 @@ class StaffTransferSerializer(TransferSerializer):
             "payout_events",
         )
         read_only_fields = TransferSerializer.Meta.read_only_fields + (
+            "payout_provider",
+            "payout_provider_details",
+            "latest_payout_attempt",
             "allowed_next_statuses",
             "compliance_flags",
             "compliance_events",
@@ -1029,3 +1054,15 @@ class StaffTransferSerializer(TransferSerializer):
 
     def get_allowed_next_statuses(self, obj):
         return get_allowed_status_transitions(obj)
+
+    def get_latest_payment_instruction(self, obj):
+        instruction = obj.payment_instructions.first()
+        if not instruction:
+            return None
+        return StaffTransferPaymentInstructionSerializer(instruction).data
+
+    def get_latest_payout_attempt(self, obj):
+        attempt = obj.payout_attempts.first()
+        if not attempt:
+            return None
+        return TransferPayoutAttemptSerializer(attempt).data

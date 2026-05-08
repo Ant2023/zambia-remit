@@ -629,7 +629,7 @@ export default function Home() {
                 </div>
                 <div>
                   <dt>Transfer time</dt>
-                  <dd>Same day</dd>
+                  <dd>Often same day</dd>
                 </div>
                 <div>
                   <dt>Total to pay</dt>

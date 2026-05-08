@@ -15,6 +15,7 @@ from rest_framework.test import APITestCase
 from rest_framework.authtoken.models import Token
 
 from apps.countries.models import Country, Currency
+from common.models import OperationalAuditLog
 from common.security import decrypt_bytes
 
 from .models import SenderDocument, SenderKycCheck, SenderProfile
@@ -254,6 +255,14 @@ class SenderKycFlowTests(APITestCase):
         self.assertEqual(self.profile.kyc_status, SenderProfile.KycStatus.VERIFIED)
         self.assertEqual(self.profile.kyc_reviewed_by, self.staff)
         self.assertIsNotNone(self.profile.kyc_reviewed_at)
+        audit_log = OperationalAuditLog.objects.get(
+            action_name="sender.kyc_review",
+            target_id=str(self.profile.id),
+        )
+        self.assertEqual(audit_log.actor, self.staff)
+        self.assertEqual(audit_log.target_reference, self.customer.email)
+        self.assertEqual(audit_log.previous_status, SenderProfile.KycStatus.PENDING)
+        self.assertEqual(audit_log.new_status, SenderProfile.KycStatus.VERIFIED)
 
     def test_customer_cannot_review_sender_kyc(self):
         self.profile.submit_kyc()
@@ -299,6 +308,16 @@ class SenderKycFlowTests(APITestCase):
             SenderProfile.KycStatus.NEEDS_REVIEW,
         )
         self.assertIn("changed after verification", self.profile.kyc_review_note)
+
+    def test_customer_sender_profile_hides_internal_review_note(self):
+        self.profile.kyc_review_note = "Internal staff KYC note."
+        self.profile.save(update_fields=("kyc_review_note", "updated_at"))
+        self.client.force_authenticate(self.customer)
+
+        response = self.client.get(reverse("sender-profile"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertNotIn("kyc_review_note", response.data)
 
 
 class SenderDocumentSecurityTests(APITestCase):
@@ -349,6 +368,11 @@ class SenderDocumentSecurityTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertNotIn("encrypted_file", response.data)
+        self.assertNotIn("sender_profile", response.data)
+        self.assertNotIn("sender_email", response.data)
+        self.assertNotIn("sha256_digest", response.data)
+        self.assertNotIn("reviewed_by_email", response.data)
+        self.assertNotIn("review_note", response.data)
         self.assertEqual(response.data["original_filename"], "identity.pdf")
 
         document = SenderDocument.objects.get()
@@ -399,6 +423,21 @@ class SenderDocumentSecurityTests(APITestCase):
 
         self.assertEqual(allowed_response.status_code, status.HTTP_200_OK)
         self.assertEqual(allowed_response.data["status"], SenderDocument.Status.APPROVED)
+        self.assertIn("sender_email", allowed_response.data)
+        self.assertIn("sha256_digest", allowed_response.data)
+        self.assertIn("review_note", allowed_response.data)
+        audit_log = OperationalAuditLog.objects.get(
+            action_name="sender_document.review",
+            target_id=document_id,
+        )
+        self.assertEqual(audit_log.actor, self.staff)
+        self.assertEqual(audit_log.target_reference, self.customer.email)
+        self.assertEqual(audit_log.previous_status, SenderDocument.Status.UPLOADED)
+        self.assertEqual(audit_log.new_status, SenderDocument.Status.APPROVED)
+        self.assertEqual(
+            audit_log.metadata["document_type"],
+            SenderDocument.DocumentType.GOVERNMENT_ID,
+        )
 
     def test_staff_document_download_requires_download_permission(self):
         upload_response = self.upload_document()

@@ -254,12 +254,17 @@ def build_rate_payload(
     total_amount = None
 
     if send_amount is not None:
-        validate_send_amount(corridor, send_amount)
         method = payout_method or "mobile_money"
-        validate_corridor_payout_method(corridor, method, send_amount)
-        fee_amount = calculate_fee_amount(corridor, method, send_amount)
         receive_amount = calculate_receive_amount(send_amount, exchange_rate)
-        total_amount = (send_amount + fee_amount).quantize(Decimal("0.01"))
+
+        if corridor.min_send_amount <= send_amount <= corridor.max_send_amount:
+            validate_send_amount(corridor, send_amount)
+            validate_corridor_payout_method(corridor, method, send_amount)
+            fee_amount = calculate_fee_amount(corridor, method, send_amount)
+            total_amount = (send_amount + fee_amount).quantize(Decimal("0.01"))
+        else:
+            validate_payout_method(method)
+            validate_corridor_payout_method(corridor, method)
     elif payout_method is not None:
         validate_payout_method(payout_method)
         validate_corridor_payout_method(corridor, payout_method)

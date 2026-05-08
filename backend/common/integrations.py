@@ -7,7 +7,7 @@ import os
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 from django.conf import settings
 
@@ -107,6 +107,13 @@ def _trim_body_for_log(body: str) -> str:
     if len(body) <= MAX_LOG_BODY_CHARS:
         return body
     return f"{body[:MAX_LOG_BODY_CHARS]}...[truncated]"
+
+
+def _open_provider_request(request: Request, *, timeout: int):
+    if getattr(settings, "PROVIDER_USE_ENV_PROXY", False):
+        return urlopen(request, timeout=timeout)
+
+    return build_opener(ProxyHandler({})).open(request, timeout=timeout)
 
 
 def _env_json(name: str) -> dict[str, Any]:
@@ -237,7 +244,10 @@ def request_json(
     )
 
     try:
-        with urlopen(request, timeout=config.timeout_seconds) as response:
+        with _open_provider_request(
+            request,
+            timeout=config.timeout_seconds,
+        ) as response:
             response_body = response.read().decode("utf-8")
             integration_logger.info(
                 "Provider response received provider=%s request_url=%s "

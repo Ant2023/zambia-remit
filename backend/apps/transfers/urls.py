@@ -1,7 +1,10 @@
 from django.urls import path
 
 from .views import (
+    StaffComplianceExportView,
+    StaffOperationalAuditExportView,
     StaffTransferAmlFlagReviewView,
+    StaffTransferExportView,
     StaffTransferComplianceActionView,
     StaffTransferListView,
     StaffTransferPaymentActionView,
@@ -45,6 +48,21 @@ urlpatterns = [
         "operations/reports/",
         StaffTransferReportView.as_view(),
         name="transfer-operations-reports",
+    ),
+    path(
+        "operations/exports/transfers.csv",
+        StaffTransferExportView.as_view(),
+        name="transfer-operations-export-transfers",
+    ),
+    path(
+        "operations/exports/compliance.csv",
+        StaffComplianceExportView.as_view(),
+        name="transfer-operations-export-compliance",
+    ),
+    path(
+        "operations/exports/audit.csv",
+        StaffOperationalAuditExportView.as_view(),
+        name="transfer-operations-export-audit",
     ),
     path("<uuid:pk>/funding/", TransferFundingView.as_view(), name="transfer-funding"),
     path(

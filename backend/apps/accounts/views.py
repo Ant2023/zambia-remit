@@ -13,6 +13,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from common.audit import record_operational_audit
 from common.email_providers import send_transactional_email
 from common.permissions import IsStaffWithRequiredPermissions
 from common.security import decrypt_bytes
@@ -25,6 +26,7 @@ from .serializers import (
     SenderDocumentReviewSerializer,
     SenderDocumentSerializer,
     SenderDocumentUploadSerializer,
+    StaffSenderDocumentSerializer,
     SenderKycReviewSerializer,
     SenderProfileSerializer,
     StaffLoginSerializer,
@@ -38,6 +40,31 @@ logger = logging.getLogger("mbongopay.security")
 PASSWORD_RESET_RESPONSE = (
     "If that customer account exists, a password reset link has been sent."
 )
+
+
+def record_account_operation_audit(
+    request,
+    *,
+    action_name: str,
+    target_type: str,
+    target_id: str,
+    target_reference: str,
+    previous_status: str = "",
+    new_status: str = "",
+    note: str = "",
+    metadata: dict | None = None,
+):
+    return record_operational_audit(
+        request=request,
+        action_name=action_name,
+        target_type=target_type,
+        target_id=target_id,
+        target_reference=target_reference,
+        previous_status=previous_status,
+        new_status=new_status,
+        note=note,
+        metadata=metadata or {},
+    )
 
 
 def issue_auth_token(user):
@@ -235,6 +262,8 @@ class StaffSenderKycReviewView(APIView):
         serializer.is_valid(raise_exception=True)
 
         next_status = serializer.validated_data["kyc_status"]
+        previous_status = profile.kyc_status
+        review_note = serializer.validated_data["review_note"]
         if (
             next_status == SenderProfile.KycStatus.VERIFIED
             and not profile.is_complete
@@ -247,7 +276,17 @@ class StaffSenderKycReviewView(APIView):
         profile.mark_kyc_reviewed(
             status=next_status,
             reviewed_by=request.user,
-            note=serializer.validated_data["review_note"],
+            note=review_note,
+        )
+        record_account_operation_audit(
+            request,
+            action_name="sender.kyc_review",
+            target_type="sender_profile",
+            target_id=str(profile.id),
+            target_reference=profile.user.email,
+            previous_status=previous_status,
+            new_status=profile.kyc_status,
+            note=review_note,
         )
         return Response(SenderProfileSerializer(profile).data)
 
@@ -286,7 +325,7 @@ class SenderDocumentDetailView(generics.RetrieveAPIView):
 
 
 class StaffSenderDocumentListView(generics.ListAPIView):
-    serializer_class = SenderDocumentSerializer
+    serializer_class = StaffSenderDocumentSerializer
     permission_classes = [IsStaffWithRequiredPermissions]
     required_permissions = ("accounts.view_senderdocument",)
 
@@ -316,12 +355,25 @@ class StaffSenderDocumentReviewView(generics.GenericAPIView):
         document = self.get_object()
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        previous_status = document.status
+        review_note = serializer.validated_data["review_note"]
         document.mark_reviewed(
             status=serializer.validated_data["status"],
             reviewed_by=request.user,
-            note=serializer.validated_data["review_note"],
+            note=review_note,
         )
-        return Response(SenderDocumentSerializer(document).data)
+        record_account_operation_audit(
+            request,
+            action_name="sender_document.review",
+            target_type="sender_document",
+            target_id=str(document.id),
+            target_reference=document.sender_profile.user.email,
+            previous_status=previous_status,
+            new_status=document.status,
+            note=review_note,
+            metadata={"document_type": document.document_type},
+        )
+        return Response(StaffSenderDocumentSerializer(document).data)
 
 
 class StaffSenderDocumentDownloadView(generics.GenericAPIView):
@@ -331,6 +383,16 @@ class StaffSenderDocumentDownloadView(generics.GenericAPIView):
 
     def get(self, request, *args, **kwargs):
         document = self.get_object()
+        record_account_operation_audit(
+            request,
+            action_name="sender_document.download",
+            target_type="sender_document",
+            target_id=str(document.id),
+            target_reference=document.sender_profile.user.email,
+            previous_status=document.status,
+            new_status=document.status,
+            metadata={"document_type": document.document_type},
+        )
         with document.encrypted_file.open("rb") as encrypted_file:
             plaintext = decrypt_bytes(encrypted_file.read())
 

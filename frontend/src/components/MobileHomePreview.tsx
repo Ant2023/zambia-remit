@@ -228,7 +228,7 @@ export function MobileHomePreview({
                 <ClockIcon className="mobile-summary-icon" />
                 <span>Transfer time</span>
               </span>
-              <strong className="green">Same day</strong>
+              <strong className="green">Often same day</strong>
             </div>
 
             <div className="mobile-summary-row">
@@ -249,7 +249,7 @@ export function MobileHomePreview({
 
           <div className="mobile-safe-note">
             <LockIcon className="lock" />
-            <span>Your money is safe with MbongoPay</span>
+            <span>Secure checks help protect your transfer</span>
           </div>
         </div>
       </section>
